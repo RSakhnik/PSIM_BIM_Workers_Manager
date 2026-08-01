@@ -1,0 +1,9 @@
+<Project>
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Deterministic>true</Deterministic>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <BimBridgeBuildRoot Condition="'$(BimBridgeBuildRoot)' == ''">C:\Users\roman\Desktop\BWM build</BimBridgeBuildRoot>
+    <BaseOutputPath>$(BimBridgeBuildRoot)\$(MSBuildProjectName)\</BaseOutputPath>
+  </PropertyGroup>
+</Project>

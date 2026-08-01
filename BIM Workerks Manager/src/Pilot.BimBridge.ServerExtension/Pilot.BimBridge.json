@@ -1,0 +1,48 @@
+{
+  "Protocol": {
+    "Version": "1.0"
+  },
+  "Workers": {
+    "MaxRegisteredWorkers": 20,
+    "MaxParallelTasksPerWorker": 1,
+    "HeartbeatIntervalSeconds": 15,
+    "WorkerOfflineAfterSeconds": 45,
+    "LongPollingTimeoutSeconds": 25
+  },
+  "Tasks": {
+    "QueueCapacity": 1000,
+    "AssignmentLeaseSeconds": 60,
+    "StartTaskTimeoutSeconds": 30,
+    "DefaultMaxAttempts": 2,
+    "DefaultTaskTtlMinutes": 60,
+    "MaxPayloadBytes": 5242880,
+    "RetryableOperationCodes": [
+      "SEARCH_ELEMENTS",
+      "READ_PROPERTIES",
+      "GET_MODEL_STRUCTURE",
+      "GET_MODEL_METADATA"
+    ]
+  },
+  "Results": {
+    "Directory": "D:\\PilotBimBridge\\Results",
+    "ChunkSizeBytes": 1048576,
+    "MaxResultBytes": 268435456,
+    "MaxParallelUploads": 8,
+    "CompletedResultTtlMinutes": 60,
+    "IncompleteUploadTtlMinutes": 30
+  },
+  "Maintenance": {
+    "LeaseCheckIntervalSeconds": 10,
+    "CleanupIntervalSeconds": 60,
+    "FailedTaskTtlMinutes": 60,
+    "CancelledTaskTtlMinutes": 30,
+    "WorkerRegistrationTtlMinutes": 10
+  },
+  "Cancellation": {
+    "AcceptCompletedResultAfterCancellation": false
+  },
+  "Logging": {
+    "LogPayloads": false,
+    "LogResults": false
+  }
+}

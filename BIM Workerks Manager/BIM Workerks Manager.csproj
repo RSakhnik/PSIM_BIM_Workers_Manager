@@ -3,6 +3,10 @@
   <PropertyGroup>
     <TargetFramework>netstandard2.0</TargetFramework>
     <RootNamespace>BIM_Workerks_Manager</RootNamespace>
+    <AssemblyName>$(MSBuildProjectName).servext</AssemblyName>
+    <BaseOutputPath>C:\Users\roman\Desktop\BWM build</BaseOutputPath>
+    <Product>BIM Workers Manager</Product>
+    <Company>Sakhnik</Company>
   </PropertyGroup>
 
 </Project>

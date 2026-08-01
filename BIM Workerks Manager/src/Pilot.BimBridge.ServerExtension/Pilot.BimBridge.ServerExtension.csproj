@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <RootNamespace>Pilot.BimBridge.ServerExtension</RootNamespace>
+    <AssemblyName>Pilot.BimBridge.ServerExtension.servext</AssemblyName>
+    <Product>BIM Workers Manager</Product>
+    <Company>Sakhnik</Company>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Ascon.Pilot.ServerExtensions.SDK" />
+    <PackageReference Include="Newtonsoft.Json" />
+    <PackageReference Include="System.ComponentModel.Composition" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Pilot.BimBridge.Contracts\Pilot.BimBridge.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Pilot.BimBridge.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
