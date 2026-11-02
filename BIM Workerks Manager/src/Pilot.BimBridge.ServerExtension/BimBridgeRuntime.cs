@@ -7,7 +7,7 @@ using Pilot.BimBridge.Contracts;
 
 namespace Pilot.BimBridge.ServerExtension
 {
-    internal sealed class BimBridgeRuntime : IDisposable
+    internal sealed partial class BimBridgeRuntime : IDisposable
     {
         private readonly object _gate = new object();
         private readonly BimBridgeOptions _options;
@@ -38,6 +38,31 @@ namespace Pilot.BimBridge.ServerExtension
             _results = results ?? throw new ArgumentNullException(nameof(results));
             _log = log ?? throw new ArgumentNullException(nameof(log));
             _retryableOperations = new HashSet<string>(options.Tasks.RetryableOperationCodes ?? Array.Empty<string>(), StringComparer.Ordinal);
+            if (results is FileSystemBimResultStore durableStore)
+            {
+                foreach (var recovered in durableStore.RecoverArtifacts())
+                {
+                    var upload = recovered.Item1;
+                    var metadata = recovered.Item2;
+                    _tasks[upload.TaskId] = new TaskRecord { TaskId = upload.TaskId, ClientRequestId = upload.ClientRequestId,
+                        OperationCode = upload.OperationCode, CreatedAtUtc = upload.TaskCreatedAtUtc,
+                        State = metadata == null ? ArtifactProtocol.ResultPrepared : BimTaskStates.Completed,
+                        CompletedAtUtc = metadata?.CreatedAtUtc, UploadId = metadata == null ? (Guid?)upload.UploadId : null };
+                    _clientRequests[upload.ClientRequestId] = upload.TaskId;
+                    if (metadata == null) _uploads[upload.UploadId] = upload;
+                }
+                foreach(var state in durableStore.RecoverTaskStates())
+                {
+                    var restored=state.ToTask();
+                    if(restored.State==BimTaskStates.CancelRequested)
+                    {
+                        restored.State=BimTaskStates.Cancelled;restored.CompletedAtUtc=_clock.UtcNow;
+                        durableStore.SaveTaskState(restored);
+                    }
+                    _tasks[state.TaskId]=restored;
+                    _clientRequests[state.ClientRequestId]=state.TaskId;
+                }
+            }
             _leaseLoop = startMaintenance ? Task.Run(() => LeaseLoopAsync(_shutdown.Token)) : Task.CompletedTask;
             _cleanupLoop = startMaintenance ? Task.Run(() => CleanupLoopAsync(_shutdown.Token)) : Task.CompletedTask;
         }
@@ -311,11 +336,13 @@ namespace Pilot.BimBridge.ServerExtension
                 if (task.State == BimTaskStates.Running)
                 {
                     task.State = BimTaskStates.CancelRequested;
+                    if(_results is FileSystemBimResultStore cancelStore)cancelStore.SaveTaskState(task);
                     return new CancelBimTaskResponseDto { TaskId = taskId, State = task.State, CancellationRequested = true };
                 }
 
                 task.State = BimTaskStates.Cancelled;
                 task.CompletedAtUtc = _clock.UtcNow;
+                if(_results is FileSystemBimResultStore cancelledStore)cancelledStore.SaveTaskState(task);
                 ReleaseWorkerLocked(task);
                 Interlocked.Increment(ref _cancelled);
                 DispatchWaitersLocked();
@@ -337,6 +364,7 @@ namespace Pilot.BimBridge.ServerExtension
                     task.State = BimTaskStates.Cancelled;
                     task.CompletedAtUtc = _clock.UtcNow;
                     task.Error = request.Error;
+                    if(_results is FileSystemBimResultStore cancelledStore)cancelledStore.SaveTaskState(task);
                     ReleaseWorkerLocked(task);
                     Interlocked.Increment(ref _cancelled);
                     DispatchWaitersLocked();
@@ -396,8 +424,11 @@ namespace Pilot.BimBridge.ServerExtension
                     ContentEncoding = request.ContentEncoding,
                     TotalLength = request.TotalLength,
                     TotalChunks = request.TotalChunks,
+                    ChunkSizeBytes = _options.Results.ChunkSizeBytes,
                     Sha256 = request.Sha256,
-                    CreatedAtUtc = _clock.UtcNow
+                    CreatedAtUtc = _clock.UtcNow,
+                    FileName = request.FileName,
+                    ResultKind = request.ResultKind
                 };
                 _uploads.Add(upload.UploadId, upload);
                 task.UploadId = upload.UploadId;
@@ -445,14 +476,14 @@ namespace Pilot.BimBridge.ServerExtension
 
             try
             {
-                await _results.WriteChunkAsync(upload, request.ChunkIndex, request.Data, cancellationToken).ConfigureAwait(false);
+                var written = await _results.WriteChunkAsync(upload, request.ChunkIndex, request.Data, cancellationToken).ConfigureAwait(false);
                 int received;
                 lock (_gate)
                 {
-                    upload.ReceivedChunks++;
+                    if (written) upload.ReceivedChunks++;
                     received = upload.ReceivedChunks;
                 }
-                Interlocked.Add(ref _uploadedBytes, request.Data.Length);
+                if (written) Interlocked.Add(ref _uploadedBytes, request.Data.Length);
                 return new UploadResultChunkResponseDto { ChunkIndex = request.ChunkIndex, ReceivedChunks = received };
             }
             catch (ResultStoreException exception)
@@ -540,12 +571,18 @@ namespace Pilot.BimBridge.ServerExtension
 
         public async Task<BimResultChunkDto> ReadResultChunkAsync(Guid taskId, int chunkIndex, CancellationToken cancellationToken)
         {
+            lock(_gate)
+            {
+                if(!_tasks.TryGetValue(taskId,out var task))return ResponseErrors.Error<BimResultChunkDto>(BimBridgeErrorCodes.TaskNotFound,"Task was not found.");
+                if(task.State!=BimTaskStates.Completed)return ResponseErrors.Error<BimResultChunkDto>(BimBridgeErrorCodes.InvalidRequest,"Task has no readable completed artifact.");
+            }
             try
             {
                 var metadata = await _results.GetMetadataAsync(taskId, cancellationToken).ConfigureAwait(false);
                 if (metadata == null)
                     return ResponseErrors.Error<BimResultChunkDto>(BimBridgeErrorCodes.TaskNotFound, "Result was not found.");
                 var data = await _results.ReadChunkAsync(taskId, chunkIndex, metadata.ChunkSizeBytes, cancellationToken).ConfigureAwait(false);
+                if(data==null)return ResponseErrors.Error<BimResultChunkDto>(BimBridgeErrorCodes.ResultExpired,"Result retention expired.");
                 return new BimResultChunkDto
                 {
                     TaskId = taskId,
@@ -595,6 +632,7 @@ namespace Pilot.BimBridge.ServerExtension
                     QueuedTasks = queued,
                     RunningTasks = running,
                     PendingResultUploads = uploads,
+                    Capabilities = new[] { ArtifactProtocol.ResumableUpload, ArtifactProtocol.ChunkDownload },
                     StoredResultBytes = storedBytes,
                     Message = ready == 0 ? "No ready workers are registered." : "BIM Bridge is operational."
                 };
@@ -684,6 +722,11 @@ namespace Pilot.BimBridge.ServerExtension
 
         internal async Task RunCleanupAsync(CancellationToken cancellationToken)
         {
+            lock(_gate) if(_results is FileSystemBimResultStore durableStore)
+            {
+                durableStore.CleanupReservations(_clock.UtcNow,TimeSpan.FromMinutes(_options.Results.ReservationTtlMinutes));
+                durableStore.CleanupTaskStates(_clock.UtcNow,TimeSpan.FromMinutes(_options.Results.ReservationTtlMinutes));
+            }
             List<Guid> resultTasks;
             List<Guid> staleUploads;
             lock (_gate)
@@ -704,7 +747,11 @@ namespace Pilot.BimBridge.ServerExtension
                 foreach (var uploadId in staleUploads)
                 {
                     if (_uploads.TryGetValue(uploadId, out var upload) && _tasks.TryGetValue(upload.TaskId, out var task))
+                    {
                         task.UploadId = null;
+                        if (task.State == ArtifactProtocol.ResultPrepared || task.State == ArtifactProtocol.ResultUploading)
+                        { task.State = BimTaskStates.Expired; task.CompletedAtUtc = now; }
+                    }
                     _uploads.Remove(uploadId);
                 }
 
@@ -866,10 +913,13 @@ namespace Pilot.BimBridge.ServerExtension
         private void AbandonLocked(TaskRecord task, WorkerRecord worker, string reason)
         {
             if (task == null || IsTerminal(task.State)) return;
+            if (task.State == ArtifactProtocol.ResultPrepared || task.State == ArtifactProtocol.ResultUploading)
+            { if (worker != null) worker.CurrentTaskId = null; return; }
             if (task.State == BimTaskStates.CancelRequested)
             {
                 task.State = BimTaskStates.Cancelled;
                 task.CompletedAtUtc = _clock.UtcNow;
+                if(_results is FileSystemBimResultStore cancelledStore)cancelledStore.SaveTaskState(task);
                 Interlocked.Increment(ref _cancelled);
             }
             else
@@ -979,7 +1029,7 @@ namespace Pilot.BimBridge.ServerExtension
             return response;
         }
 
-        private static BimResultMetadataDto MapMetadata(StoredResultMetadata metadata)
+        private BimResultMetadataDto MapMetadata(StoredResultMetadata metadata)
         {
             return new BimResultMetadataDto
             {
@@ -990,7 +1040,10 @@ namespace Pilot.BimBridge.ServerExtension
                 TotalChunks = metadata.TotalChunks,
                 ChunkSizeBytes = metadata.ChunkSizeBytes,
                 Sha256 = metadata.Sha256,
-                CreatedAtUtc = metadata.CreatedAtUtc
+                CreatedAtUtc = metadata.CreatedAtUtc,
+                FileName = metadata.FileName,
+                ResultKind = metadata.ResultKind,
+                ExpiresAtUtc = metadata.CreatedAtUtc.AddMinutes(_options.Results.CompletedResultTtlMinutes)
             };
         }
     }

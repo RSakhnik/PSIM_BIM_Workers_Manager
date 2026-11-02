@@ -15,6 +15,7 @@ namespace Pilot.BimBridge.ServerExtension
         public MaintenanceOptions Maintenance { get; set; } = new MaintenanceOptions();
         public CancellationOptions Cancellation { get; set; } = new CancellationOptions();
         public LoggingOptions Logging { get; set; } = new LoggingOptions();
+        public RestApiOptions RestApi { get; set; } = new RestApiOptions();
 
         public static BimBridgeOptions Load(string path)
         {
@@ -31,6 +32,7 @@ namespace Pilot.BimBridge.ServerExtension
 
         public void Validate()
         {
+            RestApi.Validate();
             if (Protocol.Version != BimBridgeProtocol.Version)
                 throw new InvalidDataException("Protocol.Version must be " + BimBridgeProtocol.Version + ".");
             if (Workers.MaxRegisteredWorkers <= 0 || Workers.MaxParallelTasksPerWorker <= 0)
@@ -45,10 +47,41 @@ namespace Pilot.BimBridge.ServerExtension
             if (Results.ChunkSizeBytes <= 0 || Results.MaxResultBytes <= 0 ||
                 Results.MaxParallelUploads <= 0 || string.IsNullOrWhiteSpace(Results.Directory))
                 throw new InvalidDataException("Result settings are invalid.");
+            if (Results.ChunkSizeBytes > Results.MaxUploadChunkBytes || Results.MaxUploadChunkBytes <= 0 ||
+                Results.MaxArtifactBytes <= 0 || Results.ArtifactDiskQuotaBytes < Results.MaxArtifactBytes ||
+                Results.IncompleteUploadTtlMinutes <= 0 || Results.CompletedResultTtlMinutes <= 0 || Results.ReservationTtlMinutes <= 0)
+                throw new InvalidDataException("Artifact resource limits or retention settings are invalid.");
             if (!Path.IsPathRooted(Results.Directory))
                 throw new InvalidDataException("Results.Directory must be an absolute path outside the server binaries.");
             if (Maintenance.LeaseCheckIntervalSeconds <= 0 || Maintenance.CleanupIntervalSeconds <= 0)
                 throw new InvalidDataException("Maintenance intervals must be positive.");
+        }
+    }
+
+    // Compatibility endpoint for existing token-authenticated PSIMpy notebooks.
+    // Disabled unless explicitly enabled by the existing deployment configuration.
+    internal sealed class RestApiOptions
+    {
+        public bool Enabled { get; set; }
+        public string Prefix { get; set; } = "http://127.0.0.1:5099/bim-bridge/";
+        public string Token { get; set; }
+        public string TokenEnvironmentVariable { get; set; }
+        public string AllowedOrigin { get; set; }
+        public int MaxRequestBytes { get; set; } = 5 * 1024 * 1024;
+        public string ResolveToken()
+        {
+            var environment=string.IsNullOrWhiteSpace(TokenEnvironmentVariable)?null:Environment.GetEnvironmentVariable(TokenEnvironmentVariable);
+            return string.IsNullOrWhiteSpace(environment)?Token:environment;
+        }
+        public void Validate()
+        {
+            if (!Enabled) return;
+            if (!Uri.TryCreate(Prefix, UriKind.Absolute, out var uri) ||
+                (uri.Scheme != "http" && uri.Scheme != "https") || !Prefix.EndsWith("/") ||
+                !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
+                throw new InvalidDataException("RestApi.Prefix must be an absolute HTTP(S) prefix ending with '/'.");
+            if (string.IsNullOrWhiteSpace(ResolveToken()) || MaxRequestBytes <= 0)
+                throw new InvalidDataException("Enabled RestApi requires a token and a positive request limit.");
         }
     }
 
@@ -82,9 +115,13 @@ namespace Pilot.BimBridge.ServerExtension
         public string Directory { get; set; }
         public int ChunkSizeBytes { get; set; } = 1024 * 1024;
         public long MaxResultBytes { get; set; } = 256L * 1024 * 1024;
+        public long MaxArtifactBytes { get; set; } = 8L * 1024 * 1024 * 1024;
+        public long ArtifactDiskQuotaBytes { get; set; } = 32L * 1024 * 1024 * 1024;
+        public int MaxUploadChunkBytes { get; set; } = 4 * 1024 * 1024;
         public int MaxParallelUploads { get; set; } = 8;
         public int CompletedResultTtlMinutes { get; set; } = 60;
         public int IncompleteUploadTtlMinutes { get; set; } = 30;
+        public int ReservationTtlMinutes { get; set; } = 1440;
     }
 
     internal sealed class MaintenanceOptions

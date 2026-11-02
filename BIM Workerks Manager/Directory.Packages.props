@@ -6,7 +6,10 @@
     <PackageVersion Include="Ascon.Pilot.Server.Api" Version="26.10.0" />
     <PackageVersion Include="Ascon.Pilot.ServerExtensions.SDK" Version="26.10.0" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageVersion Include="protobuf-net" Version="3.2.56" />
     <PackageVersion Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="8.0.11" />
+    <PackageVersion Include="Ascon.Pilot.Bim.SDK" Version="25.9.89-alpha" />
     <PackageVersion Include="NUnit" Version="3.14.0" />
     <PackageVersion Include="NUnit3TestAdapter" Version="4.6.0" />
     <PackageVersion Include="System.ComponentModel.Composition" Version="4.7.0" />

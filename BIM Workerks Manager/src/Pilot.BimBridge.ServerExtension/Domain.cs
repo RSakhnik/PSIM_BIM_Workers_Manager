@@ -65,6 +65,13 @@ namespace Pilot.BimBridge.ServerExtension
         public string Sha256;
         public DateTime CreatedAtUtc;
         public int ReceivedChunks;
+        public int ChunkSizeBytes;
+        public string WorkerInstanceId;
+        public string FileName;
+        public string ResultKind;
+        public Guid ClientRequestId;
+        public string OperationCode;
+        public DateTime TaskCreatedAtUtc;
     }
 
     internal sealed class Waiter

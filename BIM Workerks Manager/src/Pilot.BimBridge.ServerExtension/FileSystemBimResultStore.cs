@@ -21,6 +21,8 @@ namespace Pilot.BimBridge.ServerExtension
         public int ChunkSizeBytes { get; set; }
         public string Sha256 { get; set; }
         public DateTime CreatedAtUtc { get; set; }
+        public string FileName { get; set; }
+        public string ResultKind { get; set; }
     }
 
     internal sealed class ResultStoreException : Exception
@@ -32,7 +34,7 @@ namespace Pilot.BimBridge.ServerExtension
     internal interface IBimResultStore
     {
         Task BeginUploadAsync(UploadRecord upload, CancellationToken cancellationToken);
-        Task WriteChunkAsync(UploadRecord upload, int chunkIndex, byte[] data, CancellationToken cancellationToken);
+        Task<bool> WriteChunkAsync(UploadRecord upload, int chunkIndex, byte[] data, CancellationToken cancellationToken);
         Task<StoredResultMetadata> CompleteUploadAsync(UploadRecord upload, int chunkSizeBytes, DateTime now, CancellationToken cancellationToken);
         Task<StoredResultMetadata> GetMetadataAsync(Guid taskId, CancellationToken cancellationToken);
         Task<byte[]> ReadChunkAsync(Guid taskId, int chunkIndex, int chunkSizeBytes, CancellationToken cancellationToken);
@@ -42,7 +44,7 @@ namespace Pilot.BimBridge.ServerExtension
         Task CleanupOrphansAsync(DateTime now, TimeSpan incompleteUploadTtl, TimeSpan completedResultTtl, CancellationToken cancellationToken);
     }
 
-    internal sealed class FileSystemBimResultStore : IBimResultStore
+    internal sealed partial class FileSystemBimResultStore : IBimResultStore
     {
         private readonly string _root;
         private readonly string _uploadsRoot;
@@ -57,118 +59,14 @@ namespace Pilot.BimBridge.ServerExtension
             Directory.CreateDirectory(_uploadsRoot);
         }
 
-        public async Task BeginUploadAsync(UploadRecord upload, CancellationToken cancellationToken)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var path = UploadPath(upload.UploadId);
-            Directory.CreateDirectory(path);
-            var descriptor = JsonConvert.SerializeObject(upload);
-            using (var stream = new FileStream(Path.Combine(path, "upload.json"), FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, true))
-            using (var writer = new StreamWriter(stream, new UTF8Encoding(false)))
-                await writer.WriteAsync(descriptor).ConfigureAwait(false);
-        }
+        public Task BeginUploadAsync(UploadRecord upload, CancellationToken cancellationToken)
+            => BeginPartAsync(upload, cancellationToken);
 
-        public async Task WriteChunkAsync(UploadRecord upload, int chunkIndex, byte[] data, CancellationToken cancellationToken)
-        {
-            if (chunkIndex < 0 || chunkIndex >= upload.TotalChunks)
-                throw new ResultStoreException(BimBridgeErrorCodes.ChunkOutOfRange, "Chunk index is outside the declared range.");
-            if (data == null)
-                throw new ResultStoreException(BimBridgeErrorCodes.InvalidRequest, "Chunk data is required.");
+        public Task<bool> WriteChunkAsync(UploadRecord upload, int chunkIndex, byte[] data, CancellationToken cancellationToken)
+            => WritePartAsync(upload, chunkIndex, data, cancellationToken);
 
-            var gate = _uploadLocks.GetOrAdd(upload.UploadId, _ => new SemaphoreSlim(1, 1));
-            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                var path = ChunkPath(upload.UploadId, chunkIndex);
-                if (File.Exists(path))
-                    throw new ResultStoreException(BimBridgeErrorCodes.ChunkAlreadyReceived, "The chunk has already been received.");
-                using (var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true))
-                    await stream.WriteAsync(data, 0, data.Length, cancellationToken).ConfigureAwait(false);
-            }
-            finally
-            {
-                gate.Release();
-            }
-        }
-
-        public async Task<StoredResultMetadata> CompleteUploadAsync(
-            UploadRecord upload,
-            int chunkSizeBytes,
-            DateTime now,
-            CancellationToken cancellationToken)
-        {
-            var gate = _uploadLocks.GetOrAdd(upload.UploadId, _ => new SemaphoreSlim(1, 1));
-            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                var uploadPath = UploadPath(upload.UploadId);
-                for (var index = 0; index < upload.TotalChunks; index++)
-                {
-                    if (!File.Exists(ChunkPath(upload.UploadId, index)))
-                        throw new ResultStoreException(BimBridgeErrorCodes.UploadIncomplete, "One or more chunks are missing.");
-                }
-
-                var taskPath = ResultPath(upload.TaskId);
-                Directory.CreateDirectory(taskPath);
-                var temporaryResult = Path.Combine(taskPath, "result.tmp");
-                long written = 0;
-                using (var output = new FileStream(temporaryResult, FileMode.Create, FileAccess.Write, FileShare.None, 81920, true))
-                {
-                    for (var index = 0; index < upload.TotalChunks; index++)
-                    {
-                        using (var input = new FileStream(ChunkPath(upload.UploadId, index), FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true))
-                        {
-                            written += input.Length;
-                            await input.CopyToAsync(output, 81920, cancellationToken).ConfigureAwait(false);
-                        }
-                    }
-                    await output.FlushAsync(cancellationToken).ConfigureAwait(false);
-                }
-
-                if (written != upload.TotalLength)
-                {
-                    File.Delete(temporaryResult);
-                    throw new ResultStoreException(BimBridgeErrorCodes.UploadIncomplete, "Uploaded result size does not match TotalLength.");
-                }
-
-                var calculatedHash = await CalculateSha256Async(temporaryResult, cancellationToken).ConfigureAwait(false);
-                if (!string.IsNullOrWhiteSpace(upload.Sha256) &&
-                    !string.Equals(calculatedHash, upload.Sha256, StringComparison.OrdinalIgnoreCase))
-                {
-                    File.Delete(temporaryResult);
-                    throw new ResultStoreException(BimBridgeErrorCodes.UploadIncomplete, "Uploaded result SHA-256 does not match.");
-                }
-
-                var finalResult = Path.Combine(taskPath, "result.bin");
-                if (File.Exists(finalResult))
-                    File.Delete(finalResult);
-                File.Move(temporaryResult, finalResult);
-
-                var metadata = new StoredResultMetadata
-                {
-                    TaskId = upload.TaskId,
-                    ContentType = upload.ContentType,
-                    ContentEncoding = upload.ContentEncoding,
-                    TotalLength = upload.TotalLength,
-                    TotalChunks = (int)Math.Ceiling(upload.TotalLength / (double)chunkSizeBytes),
-                    ChunkSizeBytes = chunkSizeBytes,
-                    Sha256 = calculatedHash,
-                    CreatedAtUtc = now
-                };
-                var metadataTemporary = Path.Combine(taskPath, "metadata.tmp");
-                File.WriteAllText(metadataTemporary, JsonConvert.SerializeObject(metadata, Formatting.Indented), new UTF8Encoding(false));
-                var metadataFinal = Path.Combine(taskPath, "metadata.json");
-                if (File.Exists(metadataFinal))
-                    File.Delete(metadataFinal);
-                File.Move(metadataTemporary, metadataFinal);
-                Directory.Delete(uploadPath, true);
-                return metadata;
-            }
-            finally
-            {
-                gate.Release();
-            }
-        }
+        public Task<StoredResultMetadata> CompleteUploadAsync(UploadRecord upload, int chunkSizeBytes, DateTime now, CancellationToken cancellationToken)
+            => CompletePartAsync(upload, now, cancellationToken);
 
         public async Task<StoredResultMetadata> GetMetadataAsync(Guid taskId, CancellationToken cancellationToken)
         {
@@ -240,13 +138,16 @@ namespace Pilot.BimBridge.ServerExtension
             }
         }
 
-        public Task DeleteUploadAsync(Guid uploadId, CancellationToken cancellationToken)
+        public async Task DeleteUploadAsync(Guid uploadId, CancellationToken cancellationToken)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var path = UploadPath(uploadId);
-            if (Directory.Exists(path))
-                Directory.Delete(path, true);
-            return Task.CompletedTask;
+            var gate=_uploadLocks.GetOrAdd(uploadId,_=>new SemaphoreSlim(1,1));
+            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                var path = UploadPath(uploadId);
+                if (Directory.Exists(path))Directory.Delete(path, true);
+            }
+            finally {gate.Release();}
         }
 
         public Task<long> GetStoredBytesAsync(CancellationToken cancellationToken)
@@ -283,7 +184,8 @@ namespace Pilot.BimBridge.ServerExtension
             foreach (var directory in Directory.EnumerateDirectories(_root))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (string.Equals(directory, _uploadsRoot, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(directory, _uploadsRoot, StringComparison.OrdinalIgnoreCase) ||
+                    Path.GetFileName(directory).StartsWith(".", StringComparison.Ordinal))
                     continue;
                 var metadataPath = Path.Combine(directory, "metadata.json");
                 var resultPath = Path.Combine(directory, "result.bin");

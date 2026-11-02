@@ -2,6 +2,25 @@
 
 Серверный диспетчер задач для клиентских воркеров Pilot-BIM.
 
+## Durable bulk v2
+
+Публичный query protocol 1.0 сохранён; additive `IBimBridgeArtifactApi` и capabilities
+включают durable uploads и native chunk downloads. Opt-in TokenHttpAdapter восстанавливает существующий `/bim-bridge` для token notebook
+в том же процессе и runtime. Включается только через существующий RestApi.Enabled;
+Prefix/Token/TokenEnvironmentVariable/AllowedOrigin/MaxRequestBytes сохраняются.
+При ошибке HTTP binding native Custom API остаётся доступен, причина пишется в log.
+За reverse proxy сохраните loopback Prefix. Для прямого внешнего доступа используйте TLS.
+HTTP metadata объявляет token-http-chunks-v2; resume не требует Range.
+[ADR и жизненный цикл](docs/ADR-0002-durable-artifacts.md) описывает reservations,
+перезапуск Manager, missing ranges, immutable SHA-256 metadata и ограничения.
+Bulk MaxArtifactBytes=8GiB, disk quota=32GiB, chunk limit=4MiB, upload TTL=30min,
+result TTL=60min, reservation TTL=24h. Это отдельные настройки от query MaxResultBytes.
+Сохраняйте весь каталог Results на постоянном диске и задавайте согласованные TTL
+в `Pilot.BimBridge.json`. После истечения result TTL клиент не может продолжить download.
+
+Все новые проверки используют локальные stores и fake SDK. TestHarness — тестовый
+stdio процесс без сетевого listener. Он не подключается к Pilot.
+
 ## Состав
 
 - `Pilot.BimBridge.Contracts` — публичный протокол версии `1.0`.

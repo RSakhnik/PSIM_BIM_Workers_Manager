@@ -6,10 +6,29 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="NUnit" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="Ascon.Pilot.Bim.SDK" />
     <PackageReference Include="NUnit3TestAdapter" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Pilot.BimBridge.ServerExtension\Pilot.BimBridge.ServerExtension.csproj" />
     <ProjectReference Include="..\..\src\Pilot.BimBridge.Contracts\Pilot.BimBridge.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/ArtifactTransfer.cs" Link="Worker/ArtifactTransfer.cs" />
+    <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/SpatialExportIndex.cs" Link="Worker/SpatialExportIndex.cs" />
+    <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/BinarySpatialWriter.cs" Link="Worker/BinarySpatialWriter.cs" />
+    <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/ArtifactWriter.cs" Link="Worker/ArtifactWriter.cs" />
+    <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/SpatialPrimitives.cs" Link="Worker/SpatialPrimitives.cs" />
+    <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/SpatialSourceContracts.cs" Link="Worker/SpatialSourceContracts.cs" />
+    <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/ElementKey.cs" Link="Worker/ElementKey.cs" />
+    <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/BulkSelection.cs" Link="Worker/BulkSelection.cs" />
+    <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/PagedSearch.cs" Link="Worker/PagedSearch.cs" />
+    <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/SpatialSdkCursor.cs" Link="Worker/SpatialSdkCursor.cs" />
+    <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/SearchRequests.cs" Link="Worker/SearchRequests.cs" />
+    <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/SearchFilters.cs" Link="Worker/SearchFilters.cs" />
+    <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/ModelSnapshotPolicy.cs" Link="Worker/ModelSnapshotPolicy.cs" />
+    <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/PropertySnapshots.cs" Link="Worker/PropertySnapshots.cs" />
+    <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/ExportElements.cs" Link="Worker/ExportElements.cs" />
   </ItemGroup>
 </Project>

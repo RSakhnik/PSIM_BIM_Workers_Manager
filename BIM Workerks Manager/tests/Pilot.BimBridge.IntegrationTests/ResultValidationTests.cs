@@ -12,7 +12,7 @@ namespace Pilot.BimBridge.IntegrationTests
     public sealed class ResultValidationTests
     {
         [Test]
-        public async Task MissingDuplicateAndOversizedChunksAreRejected()
+        public async Task MissingAndOversizedChunksAreRejectedAndDuplicateIsIdempotent()
         {
             var directory = Path.Combine(
                 Environment.GetEnvironmentVariable("BIM_BRIDGE_TEST_ROOT") ?? @"C:\Users\roman\Desktop\BWM tests",
@@ -89,7 +89,8 @@ namespace Pilot.BimBridge.IntegrationTests
                 }, CancellationToken.None);
                 Assert.That(tooLarge.Error.Code, Is.EqualTo(BimBridgeErrorCodes.ResultTooLarge));
                 Assert.That(first.IsSuccess, Is.True);
-                Assert.That(duplicate.Error.Code, Is.EqualTo(BimBridgeErrorCodes.ChunkAlreadyReceived));
+                Assert.That(duplicate.IsSuccess, Is.True);
+                Assert.That(duplicate.ReceivedChunks, Is.EqualTo(1));
                 Assert.That(incomplete.Error.Code, Is.EqualTo(BimBridgeErrorCodes.UploadIncomplete));
             }
             Directory.Delete(directory, true);

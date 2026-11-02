@@ -14,6 +14,7 @@ namespace Pilot.BimBridge.ServerExtension
         private readonly IBimBridgeLog _log;
         private readonly BimBridgeRuntime _runtime;
         private readonly string _configurationError;
+        private readonly TokenHttpAdapter _http;
 
         public ServerApiFactory()
         {
@@ -34,6 +35,16 @@ namespace Pilot.BimBridge.ServerExtension
                     TimeSpan.FromMinutes(options.Results.CompletedResultTtlMinutes),
                     CancellationToken.None).GetAwaiter().GetResult();
                 _runtime = new BimBridgeRuntime(options, new SystemClock(), resultStore, _log);
+                if (options.RestApi.Enabled)
+                {
+                    try { _http = new TokenHttpAdapter(options.RestApi, _runtime, _log); _http.Start(); }
+                    catch (Exception error)
+                    {
+                        _http?.Dispose();
+                        // Native Custom API remains available if HTTP binding fails.
+                        _log.Error("BIM Bridge token HTTP adapter failed to start. Check prefix binding and permissions.", error);
+                    }
+                }
             }
             catch (Exception exception)
             {
@@ -46,6 +57,7 @@ namespace Pilot.BimBridge.ServerExtension
         {
             if (interfaceName == nameof(IBimBridgeTaskApi) ||
                 interfaceName == nameof(IBimBridgeWorkerApi) ||
+                interfaceName == nameof(IBimBridgeArtifactApi) ||
                 interfaceName == nameof(IBimBridgeDiagnosticsApi))
             {
                 api = new BimBridgeApiSession(_runtime, _configurationError, _log);
@@ -57,6 +69,7 @@ namespace Pilot.BimBridge.ServerExtension
 
         public void Dispose()
         {
+            _http?.Dispose();
             _runtime?.Dispose();
         }
     }
@@ -64,6 +77,7 @@ namespace Pilot.BimBridge.ServerExtension
     internal sealed class BimBridgeApiSession :
         IBimBridgeTaskApi,
         IBimBridgeWorkerApi,
+        IBimBridgeArtifactApi,
         IBimBridgeDiagnosticsApi,
         IDisposable
     {
@@ -78,6 +92,17 @@ namespace Pilot.BimBridge.ServerExtension
             _configurationError = configurationError;
             _log = log;
         }
+
+        public Task<ArtifactUploadStatusDto> BeginOrResumeUploadAsync(BeginArtifactUploadDto request)
+            => GuardAsync(token => _runtime.BeginOrResumeArtifactAsync(request, token));
+        public Task<ArtifactUploadStatusDto> ReserveArtifactAsync(ReserveArtifactDto request)
+            => GuardAsync(token => _runtime.ReserveArtifactAsync(request, token));
+        public Task<ArtifactUploadStatusDto> GetUploadStatusAsync(ArtifactTransferRequestDto request)
+            => GuardAsync(token => _runtime.ArtifactStatusAsync(request, token));
+        public Task<ArtifactChunkResponseDto> WriteArtifactChunkAsync(ArtifactChunkRequestDto request)
+            => GuardAsync(token => _runtime.WriteArtifactChunkAsync(request, token));
+        public Task<CompleteTaskResponseDto> CompleteArtifactAsync(ArtifactTransferRequestDto request)
+            => GuardAsync(token => _runtime.CompleteArtifactAsync(request, token));
 
         public Task<BimTaskAcceptedDto> SubmitTaskAsync(SubmitBimTaskRequestDto request)
             => Guard(() => _runtime.Submit(request));

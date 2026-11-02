@@ -29,7 +29,11 @@
     "MaxResultBytes": 268435456,
     "MaxParallelUploads": 8,
     "CompletedResultTtlMinutes": 60,
-    "IncompleteUploadTtlMinutes": 30
+    "IncompleteUploadTtlMinutes": 30,
+    "MaxArtifactBytes": 8589934592,
+    "ArtifactDiskQuotaBytes": 34359738368,
+    "MaxUploadChunkBytes": 4194304,
+    "ReservationTtlMinutes": 1440
   },
   "Maintenance": {
     "LeaseCheckIntervalSeconds": 10,
