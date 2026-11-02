@@ -1,0 +1,25 @@
+# ADR-0003: bounded parallel shard pipeline
+
+Manager retains its existing shared queue and pull/long-poll scheduler. It filters capabilities/model key and orders compatible tasks by preference, priority and creation time. Preference remains soft. A worker with an active assignment cannot receive a second one. Faster workers naturally request more work; there is no static worker partition or distributed SDK execution inside one process.
+
+PSIMpy 0.3.0 creates multiple ordinary export-spatial tasks with bounded prefetch and one pinned ModelVersionUtc. Updated workers durably prepare result files, then acknowledge preparation through existing BeginOrResume. Preparation acknowledgement is sent independently of the large uploader lane, so artifact A cannot defer notification for prepared artifact B. That transition releases only the original execution assignment; uploads have separate lifetime. Worker runs one SDK operation and one independent artifact uploader, with two prepared artifacts maximum by default. No new operation, network layer or parallel-export capability is introduced.
+
+## Correctness and compatibility
+
+Public protocol remains 1.0 with existing bulk-v2 capabilities. BimTaskStatus adds protobuf tags 9 WorkerInstanceId and 10 nullable ProcessingWallMs. Statistics adds tags 8–22 for queue/worker counters, assignments/completions by worker, active uploads/download chunk calls, byte rates, full-artifact SHA elapsed and mean processing wall by worker. Old protobuf readers skip the fields; legacy responses produce null/unavailable processing time. BeginArtifactUploadDto adds optional protobuf tag 4 WorkerProcessingWallMs; its measured value survives spool/upload/task-state recovery and does not participate in immutable artifact identity. Source copies are synchronized to AdvancedTools and PSIMpy by tools/sync_contracts.py.
+
+Existing configurable retry whitelist is preserved for other operations. Additionally, read-only export-spatial/export-elements with explicit ModelVersionUtc, plain UTF-8/identity payload, CanRetry=true and remaining attempts are safely requeued on lost lease even with a legacy whitelist. Snapshot pin prevents mixed-version retry. An old reservation cannot publish an artifact after the task has a different active AssignmentId: ASSIGNMENT_MISMATCH. Original transfer completion does not release a subsequent SDK assignment on the same worker.
+
+MaxParallelUploads and ArtifactDiskQuotaBytes remain enforced under the artifact begin gate. Retried chunks are immutable/idempotent; full size/SHA validation and atomic result publication are retained. Prepared transfers and terminal task state remain durable in the existing store.
+
+## Observability
+
+GetStatisticsAsync remains the diagnostics API. Existing token adapter additionally binds GET /statistics; PSIMpy exposes client.statistics() through both transports. QueuedTasks, RunningTasks (assigned/running/cancel-requested), WaitingWorkers (active long polls), BusyWorkers (execution assignments), AssignmentsTotal/ByWorker, CompletedTasksByWorker, ActiveUploads (occupied transfer slots), PreparedArtifacts and ActiveDownloads (currently executing chunk read calls) are explicit. UploadBytesPerSecond/DownloadBytesPerSecond are cumulative process-lifetime averages; ManagerShaDurationMs sums full-artifact SHA monotonic elapsed intervals, not OS CPU time. Counters restart with Manager process.
+
+ProcessingWallMs is supplied by the worker from monotonic operation intervals (dispatcher plus any JSON result serialization), including SDK/encoding/artifact write-finalize within the handler. It excludes reservation/heartbeat RPC, spool publication, prepare acknowledgement, uploader queue/retries and delivery. Stored values survive Manager recovery. Legacy/unreported durations remain null; averages only include reported samples. No SDK active time is invented. A test advances Manager clock by five minutes during delivery and verifies the reported 12.5 ms processing duration remains 12.5 ms after completion and restart. CurrentTaskId remains available in GetWorkers.
+
+## Validation
+
+MultiWorkerTests exercises four workers/twenty queued tasks, uniqueness, busy/capability/model filtering, faster pull worker, soft preference, lease loss, pinned UTF-8 shard requeue, stale reservations, simultaneous transfers and upload/disk quota backpressure. WorkerPipelineTests exercises overlap, two-artifact bound, byte headroom, disconnect/reconnect, durable recovery, distinct identities/owner lock and terminal delivery retention. ParallelContractTests round-trips new protobuf DTOs through legacy field layouts.
+
+TestHarness --parallel hosts this real runtime, existing token adapter, real binary writer/artifact spool/uploader/pipeline, and fake SDK geometry. Python test_parallel_roundtrip validates bounds-only and full mesh shards, deterministic readers, size/SHA, transformed vertices, per-worker SDK concurrency=1, prepared queue<=2 and SDK/upload overlap. It never connects to a Pilot deployment. A two-machine Pilot acceptance test remains an explicit deployment step, described in PSIMpy/docs/parallel-exports.md.

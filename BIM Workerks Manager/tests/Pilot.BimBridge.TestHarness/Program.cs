@@ -11,6 +11,7 @@ using WorkerSettings=AdvancedTools.BimBridge.BimBridgeSettings;
 
 var root=Environment.GetEnvironmentVariable("BIM_BRIDGE_HARNESS_ROOT")??throw new InvalidOperationException("Explicit harness root required.");
 Directory.CreateDirectory(root);
+if(args.Length>0&&args[0]=="--parallel") {await ParallelHarness.RunAsync(root,args[1],int.Parse(args[2]));return;}
 var options=new BimBridgeOptions();options.Results.Directory=Path.Combine(root,"results");options.Results.ChunkSizeBytes=128;
 using var runtime=new BimBridgeRuntime(options,new SystemClock(),new FileSystemBimResultStore(options.Results.Directory),new Log(),false);
 var models=new ModelContextProvider {ElementsPerPart=100};
@@ -30,6 +31,7 @@ while((line=Console.ReadLine())!=null)
             case "Connect":response=new {Connected=true};break;
             case "GetHealth":response=await runtime.GetHealthAsync(CancellationToken.None);break;
             case "GetWorkers":response=runtime.GetWorkers();break;
+            case "GetStatistics":response=runtime.GetStatistics();break;
             case "GetTaskStatus":response=runtime.GetTaskStatus(Guid.Parse(request.Value<string>("TaskId")));break;
             case "GetResultMetadata":response=await runtime.GetResultMetadataAsync(Guid.Parse(request.Value<string>("TaskId")),CancellationToken.None);break;
             case "CancelTask":response=runtime.Cancel(Guid.Parse(request.Value<string>("TaskId")));break;

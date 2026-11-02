@@ -89,3 +89,7 @@ dotnet test Pilot.BimBridge.sln
 
 Проверка загрузки MEF и реального клиент-серверного транспорта возможна только
 на стенде с Pilot-Server 26.10.
+
+## Parallel shard pipeline
+
+Queue/execution/delivery semantics, additive contracts, metrics and regression tests: [ADR-0003](docs/ADR-0003-parallel-pipeline.md). The existing token binding exposes `GET /statistics`; native clients use `IBimBridgeDiagnosticsApi.GetStatisticsAsync`.

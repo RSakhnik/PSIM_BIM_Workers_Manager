@@ -179,6 +179,8 @@ namespace Pilot.BimBridge.ServerExtension
             finally { gate.Release(); }
         }
 
+        private long _shaTicks;
+        internal double ShaDurationMs=>Interlocked.Read(ref _shaTicks)*1000d/System.Diagnostics.Stopwatch.Frequency;
         private async Task<StoredResultMetadata> CompletePartAsync(UploadRecord upload, DateTime now, CancellationToken token)
         {
             var gate = _uploadLocks.GetOrAdd(upload.UploadId, _ => new SemaphoreSlim(1, 1));
@@ -205,7 +207,10 @@ namespace Pilot.BimBridge.ServerExtension
                 if (!File.Exists(part)) part = Path.Combine(path, "result.bin");
                 if (new FileInfo(part).Length != upload.TotalLength)
                     throw new ResultStoreException("INTEGRITY_ERROR", "Artifact length mismatch.");
-                var hash = await CalculateSha256Async(part, token).ConfigureAwait(false);
+                var shaStarted=System.Diagnostics.Stopwatch.GetTimestamp();
+                string hash;
+                try {hash = await CalculateSha256Async(part, token).ConfigureAwait(false);}
+                finally {Interlocked.Add(ref _shaTicks,System.Diagnostics.Stopwatch.GetTimestamp()-shaStarted);}
                 if (!string.IsNullOrEmpty(upload.Sha256) && !string.Equals(upload.Sha256, hash, StringComparison.OrdinalIgnoreCase))
                     throw new ResultStoreException("INTEGRITY_ERROR", "Artifact SHA-256 mismatch.");
                 var metadata = new StoredResultMetadata { TaskId = upload.TaskId, ContentType = upload.ContentType,

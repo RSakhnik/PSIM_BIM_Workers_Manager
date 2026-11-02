@@ -15,6 +15,7 @@
     <ProjectReference Include="..\..\src\Pilot.BimBridge.Contracts\Pilot.BimBridge.Contracts.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/PreparedArtifactPipeline.cs" Link="Worker/PreparedArtifactPipeline.cs" />
     <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/ArtifactTransfer.cs" Link="Worker/ArtifactTransfer.cs" />
     <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/SpatialExportIndex.cs" Link="Worker/SpatialExportIndex.cs" />
     <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/BinarySpatialWriter.cs" Link="Worker/BinarySpatialWriter.cs" />

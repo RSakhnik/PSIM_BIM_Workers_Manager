@@ -11,6 +11,8 @@ namespace AdvancedTools.BimBridge
         public string DurableWorkerId {get;set;}="test-owner";
         public long MaxArtifactBytes {get;set;}=1024*1024;
         public long ArtifactDiskQuotaBytes {get;set;}=2*1024*1024;
+        public int MaxPreparedArtifacts {get;set;}=2;
+        public long MaxPreparedArtifactBytes {get;set;}=2*1024*1024;
         public int ArtifactRetentionHours {get;set;}=24;
         public int ResultTransferMaxAttempts {get;set;}=3;
         public int ResultTransferTimeoutSeconds {get;set;}=5;

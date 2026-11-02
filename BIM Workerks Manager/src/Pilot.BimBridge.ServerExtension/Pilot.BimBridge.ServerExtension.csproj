@@ -4,6 +4,7 @@
     <RootNamespace>Pilot.BimBridge.ServerExtension</RootNamespace>
     <AssemblyName>Pilot.BimBridge.ServerExtension.servext</AssemblyName>
     <Product>BIM Workers Manager</Product>
+    <Version>1.1.0</Version>
     <Company>Sakhnik</Company>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>

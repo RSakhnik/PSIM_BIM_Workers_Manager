@@ -32,6 +32,9 @@ namespace Pilot.BimBridge.ServerExtension
         public string[] RequiredCapabilities;
         public string TargetModelKey;
         public string PreferredWorkerInstanceId;
+        public string ExecutionWorkerInstanceId;
+        public DateTime? PreparedAtUtc;
+        public double? WorkerProcessingWallMs;
         public int Priority;
         public string PayloadContentType;
         public string PayloadEncoding;
@@ -65,6 +68,7 @@ namespace Pilot.BimBridge.ServerExtension
         public string Sha256;
         public DateTime CreatedAtUtc;
         public int ReceivedChunks;
+        public double? WorkerProcessingWallMs;
         public int ChunkSizeBytes;
         public string WorkerInstanceId;
         public string FileName;

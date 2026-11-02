@@ -122,6 +122,7 @@ namespace Pilot.BimBridge.ServerExtension
                     capabilities.Add("token-http-chunks-v2");health["Capabilities"]=capabilities;
                     await JsonAsync(response,health);return;
                 }
+                if(method=="GET" && parts.SequenceEqual(new[]{"statistics"})) {await JsonAsync(response,await _api.GetStatisticsAsync());return;}
                 if(method=="GET" && parts.SequenceEqual(new[]{"workers"})) {await JsonAsync(response,await _api.GetWorkersAsync());return;}
                 if(method=="POST" && parts.SequenceEqual(new[]{"tasks"}))
                 {

@@ -41,6 +41,7 @@ namespace Pilot.BimBridge.Contracts
         [ProtoMember(1)] public Guid TransferId { get; set; }
         [ProtoMember(2)] public string WorkerInstanceId { get; set; }
         [ProtoMember(3)] public BeginResultUploadRequestDto Descriptor { get; set; }
+        [ProtoMember(4)] public double? WorkerProcessingWallMs {get;set;}
     }
 
     [ProtoContract]

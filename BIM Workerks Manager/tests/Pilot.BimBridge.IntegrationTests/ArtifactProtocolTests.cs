@@ -43,6 +43,24 @@ namespace Pilot.BimBridge.IntegrationTests
             TransferId=_begin.TransferId,RegistrationId=_registration,WorkerInstanceId=name};
         private Task<ArtifactChunkResponseDto> Chunk(int index,byte[] bytes,string hash=null) => _runtime.WriteArtifactChunkAsync(
             new ArtifactChunkRequestDto {Transfer=Identity(),ChunkIndex=index,Data=bytes,Sha256=hash??Hash(bytes)},Token);
+        [Test] public async Task ProcessingDurationExcludesUploaderQueueRetryAndManagerClockTimeAndSurvivesRestart()
+        {
+            _begin.WorkerProcessingWallMs=12.5;
+            Assert.That((await _runtime.BeginOrResumeArtifactAsync(_begin,Token)).IsSuccess,Is.True);
+            _clock.Advance(TimeSpan.FromMinutes(5));_runtime.RunLeaseCheck();_registration=Register();
+            await Chunk(0,new byte[]{1,2,3,4});await Chunk(1,new byte[]{5,6});
+            Assert.That((await _runtime.CompleteArtifactAsync(Identity(),Token)).IsSuccess,Is.True);
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).ProcessingWallMs,Is.EqualTo(12.5));
+            Assert.That(_runtime.GetStatistics().AverageProcessingWallMsByWorker["stable-worker"],Is.EqualTo(12.5));
+            _runtime.Dispose();_runtime=Runtime();
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).ProcessingWallMs,Is.EqualTo(12.5));
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).WorkerInstanceId,Is.EqualTo("stable-worker"));
+        }
+        [Test] public async Task UnreportedProcessingDurationRemainsUnavailable()
+        {
+            Assert.That((await _runtime.BeginOrResumeArtifactAsync(_begin,Token)).IsSuccess,Is.True);
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).ProcessingWallMs,Is.Null);
+        }
         [Test] public async Task LostAcksReconnectAndLeaseExpiryNeverRepeatExtraction()
         {
             var first=await _runtime.BeginOrResumeArtifactAsync(_begin,Token);

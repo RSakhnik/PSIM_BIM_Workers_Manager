@@ -80,6 +80,9 @@ namespace Pilot.BimBridge.ServerExtension
                     var error = ValidateTransferOwnerLocked(identity);
                     if (error != null) return new ArtifactUploadStatusDto { Error = error };
                 }
+                if(request.WorkerProcessingWallMs.HasValue && (double.IsNaN(request.WorkerProcessingWallMs.Value)||
+                    double.IsInfinity(request.WorkerProcessingWallMs.Value)||request.WorkerProcessingWallMs.Value<0))
+                    return ResponseErrors.Error<ArtifactUploadStatusDto>("INVALID_REQUEST","Processing duration must be finite and nonnegative.");
                 var descriptor = request.Descriptor;
                 if (descriptor.TotalLength > _options.Results.MaxArtifactBytes)
                     return ResponseErrors.Error<ArtifactUploadStatusDto>("RESULT_TOO_LARGE", "Artifact exceeds the configured byte limit.");
@@ -117,6 +120,8 @@ namespace Pilot.BimBridge.ServerExtension
                                     CreatedAtUtc=reservation.TaskCreatedAtUtc,State=BimTaskStates.Running};
                                 _tasks[task.TaskId]=task;_clientRequests[task.ClientRequestId]=task.TaskId;
                             }
+                            if(task.AssignmentId.HasValue&&task.AssignmentId.Value!=descriptor.AssignmentId)
+                                return ResponseErrors.Error<ArtifactUploadStatusDto>("ASSIGNMENT_MISMATCH","Task has been reassigned; stale artifact cannot replace the active execution.");
                             if(task.State==BimTaskStates.Cancelled || task.State==BimTaskStates.CancelRequested || task.State==BimTaskStates.Completed)
                                 return ResponseErrors.Error<ArtifactUploadStatusDto>("TASK_ALREADY_COMPLETED","Task is cancelled or already has a completed result.");
                         }
@@ -136,6 +141,7 @@ namespace Pilot.BimBridge.ServerExtension
                     upload = new UploadRecord { UploadId = request.TransferId, TaskId = descriptor.TaskId,
                         AssignmentId = descriptor.AssignmentId, RegistrationId = descriptor.RegistrationId,
                         WorkerInstanceId = request.WorkerInstanceId, TotalLength = descriptor.TotalLength,
+                        WorkerProcessingWallMs=previous?.WorkerProcessingWallMs??request.WorkerProcessingWallMs,
                         TotalChunks = descriptor.TotalChunks, ChunkSizeBytes = previous?.ChunkSizeBytes ?? _options.Results.ChunkSizeBytes,
                         Sha256 = descriptor.Sha256, ContentType = descriptor.ContentType, ContentEncoding = descriptor.ContentEncoding,
                         FileName = descriptor.FileName, ResultKind = descriptor.ResultKind,
@@ -145,6 +151,8 @@ namespace Pilot.BimBridge.ServerExtension
                         TaskCreatedAtUtc = previous?.TaskCreatedAtUtc ?? task.CreatedAtUtc };
                     if (previous == null)
                     {
+                        task.PreparedAtUtc=_clock.UtcNow;
+                        task.WorkerProcessingWallMs=upload.WorkerProcessingWallMs;
                         task.State = ArtifactProtocol.ResultPrepared;
                         task.UploadId = upload.UploadId;
                         _uploads[upload.UploadId] = upload;
@@ -172,7 +180,8 @@ namespace Pilot.BimBridge.ServerExtension
                     {
                         _tasks[upload.TaskId] = new TaskRecord { TaskId = upload.TaskId, ClientRequestId = upload.ClientRequestId,
                             OperationCode = upload.OperationCode, CreatedAtUtc = upload.TaskCreatedAtUtc,
-                            State = ArtifactProtocol.ResultPrepared, UploadId = upload.UploadId };
+                            State = ArtifactProtocol.ResultPrepared, UploadId = upload.UploadId,
+                            ExecutionWorkerInstanceId=upload.WorkerInstanceId,WorkerProcessingWallMs=upload.WorkerProcessingWallMs };
                         _clientRequests[upload.ClientRequestId] = upload.TaskId;
                     }
                     if (_tasks[upload.TaskId].State != BimTaskStates.Completed) _uploads[upload.UploadId] = upload;
@@ -227,10 +236,12 @@ namespace Pilot.BimBridge.ServerExtension
                             OperationCode = upload.OperationCode, CreatedAtUtc = upload.TaskCreatedAtUtc };
                         _tasks[task.TaskId] = task; _clientRequests[task.ClientRequestId] = task.TaskId;
                     }
+                    task.WorkerProcessingWallMs=upload.WorkerProcessingWallMs;
+                    task.ExecutionWorkerInstanceId=upload.WorkerInstanceId;
                     cancelled=task.State==BimTaskStates.Cancelled||task.State==BimTaskStates.CancelRequested;
                     if(!cancelled)
                     {
-                        if (task.State != BimTaskStates.Completed) Interlocked.Increment(ref _completed);
+                        if (task.State != BimTaskStates.Completed) {Interlocked.Increment(ref _completed);RecordCompletionLocked(task,upload.WorkerInstanceId);}
                         task.State = BimTaskStates.Completed; task.CompletedAtUtc = metadata.CreatedAtUtc;
                         task.Payload = Array.Empty<byte>(); task.UploadId = null; _uploads.Remove(upload.UploadId);
                         ArtifactStore.SaveTaskState(task);

@@ -47,7 +47,8 @@ namespace Pilot.BimBridge.ServerExtension
                     _tasks[upload.TaskId] = new TaskRecord { TaskId = upload.TaskId, ClientRequestId = upload.ClientRequestId,
                         OperationCode = upload.OperationCode, CreatedAtUtc = upload.TaskCreatedAtUtc,
                         State = metadata == null ? ArtifactProtocol.ResultPrepared : BimTaskStates.Completed,
-                        CompletedAtUtc = metadata?.CreatedAtUtc, UploadId = metadata == null ? (Guid?)upload.UploadId : null };
+                        CompletedAtUtc = metadata?.CreatedAtUtc, UploadId = metadata == null ? (Guid?)upload.UploadId : null,
+                        WorkerProcessingWallMs=upload.WorkerProcessingWallMs,ExecutionWorkerInstanceId=upload.WorkerInstanceId };
                     _clientRequests[upload.ClientRequestId] = upload.TaskId;
                     if (metadata == null) _uploads[upload.UploadId] = upload;
                 }
@@ -319,7 +320,9 @@ namespace Pilot.BimBridge.ServerExtension
                     AssignedAtUtc = task.AssignedAtUtc,
                     StartedAtUtc = task.StartedAtUtc,
                     CompletedAtUtc = task.CompletedAtUtc,
-                    TaskError = task.Error
+                    TaskError = task.Error,
+                    WorkerInstanceId=task.ExecutionWorkerInstanceId,
+                    ProcessingWallMs=task.WorkerProcessingWallMs
                 };
             }
         }
@@ -539,6 +542,7 @@ namespace Pilot.BimBridge.ServerExtension
                 task.Payload = Array.Empty<byte>();
                 task.UploadId = null;
                 _uploads.Remove(upload.UploadId);
+                RecordCompletionLocked(task);
                 ReleaseWorkerLocked(task);
                 Interlocked.Increment(ref _completed);
                 DispatchWaitersLocked();
@@ -576,6 +580,7 @@ namespace Pilot.BimBridge.ServerExtension
                 if(!_tasks.TryGetValue(taskId,out var task))return ResponseErrors.Error<BimResultChunkDto>(BimBridgeErrorCodes.TaskNotFound,"Task was not found.");
                 if(task.State!=BimTaskStates.Completed)return ResponseErrors.Error<BimResultChunkDto>(BimBridgeErrorCodes.InvalidRequest,"Task has no readable completed artifact.");
             }
+            Interlocked.Increment(ref _activeDownloads);
             try
             {
                 var metadata = await _results.GetMetadataAsync(taskId, cancellationToken).ConfigureAwait(false);
@@ -583,6 +588,7 @@ namespace Pilot.BimBridge.ServerExtension
                     return ResponseErrors.Error<BimResultChunkDto>(BimBridgeErrorCodes.TaskNotFound, "Result was not found.");
                 var data = await _results.ReadChunkAsync(taskId, chunkIndex, metadata.ChunkSizeBytes, cancellationToken).ConfigureAwait(false);
                 if(data==null)return ResponseErrors.Error<BimResultChunkDto>(BimBridgeErrorCodes.ResultExpired,"Result retention expired.");
+                Interlocked.Add(ref _downloadedBytes,data.Length);
                 return new BimResultChunkDto
                 {
                     TaskId = taskId,
@@ -600,6 +606,7 @@ namespace Pilot.BimBridge.ServerExtension
                 _log.Error("Unable to read result chunk for task " + taskId, exception);
                 return ResponseErrors.Error<BimResultChunkDto>(BimBridgeErrorCodes.InternalError, "Unable to read result chunk.", true);
             }
+            finally {Interlocked.Decrement(ref _activeDownloads);}
         }
 
         public async Task<BimBridgeHealthDto> GetHealthAsync(CancellationToken cancellationToken)
@@ -672,7 +679,7 @@ namespace Pilot.BimBridge.ServerExtension
         {
             lock (_gate)
             {
-                return new BimBridgeStatisticsDto
+                var result = new BimBridgeStatisticsDto
                 {
                     SubmittedTasks = Interlocked.Read(ref _submitted),
                     CompletedTasks = Interlocked.Read(ref _completed),
@@ -682,6 +689,8 @@ namespace Pilot.BimBridge.ServerExtension
                     UploadedBytes = Interlocked.Read(ref _uploadedBytes),
                     ActiveLongPolls = _waiters.Count
                 };
+                AddParallelStatistics(result);
+                return result;
             }
         }
 
@@ -830,6 +839,10 @@ namespace Pilot.BimBridge.ServerExtension
             if (task == null) return null;
 
             task.State = BimTaskStates.Assigned;
+            task.ExecutionWorkerInstanceId=worker.WorkerInstanceId;
+            task.PreparedAtUtc=null;
+            _assignmentsByWorker.TryGetValue(worker.WorkerInstanceId,out var assignments);
+            _assignmentsByWorker[worker.WorkerInstanceId]=assignments+1;
             task.AttemptNumber++;
             task.RegistrationId = worker.RegistrationId;
             task.AssignmentId = Guid.NewGuid();
@@ -948,7 +961,22 @@ namespace Pilot.BimBridge.ServerExtension
 
         private bool CanRetryLocked(TaskRecord task)
         {
-            return task.CanRetry && task.AttemptNumber < task.MaxAttempts && _retryableOperations.Contains(task.OperationCode);
+            return task.CanRetry && task.AttemptNumber < task.MaxAttempts &&
+                (_retryableOperations.Contains(task.OperationCode) || IsPinnedReadOnlyExport(task));
+        }
+
+        private static bool IsPinnedReadOnlyExport(TaskRecord task)
+        {
+            if(task.OperationCode!=ArtifactProtocol.ExportSpatial && task.OperationCode!=ArtifactProtocol.ExportElements)return false;
+            if(!string.IsNullOrEmpty(task.PayloadEncoding)&&task.PayloadEncoding!="identity"&&task.PayloadEncoding!="utf-8"&&task.PayloadEncoding!="utf8")return false;
+            try
+            {
+                var payload=Newtonsoft.Json.Linq.JObject.Parse(System.Text.Encoding.UTF8.GetString(task.Payload??Array.Empty<byte>()));
+                var version=payload["ModelVersionUtc"];
+                return version!=null&&DateTimeOffset.TryParse(version.ToString(),System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.RoundtripKind,out _);
+            }
+            catch(Newtonsoft.Json.JsonException){return false;}
         }
 
         private static void ResetForRetryLocked(TaskRecord task)

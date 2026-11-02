@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using ProtoBuf;
@@ -480,6 +480,8 @@ namespace Pilot.BimBridge.Contracts
         public DateTime? CompletedAtUtc { get; set; }
         [ProtoMember(8)]
         public BimTaskErrorDto TaskError { get; set; }
+        [ProtoMember(9)] public string WorkerInstanceId {get;set;}
+        [ProtoMember(10)] public double? ProcessingWallMs {get;set;}
     }
 
     [ProtoContract]
@@ -605,5 +607,20 @@ namespace Pilot.BimBridge.Contracts
         public long UploadedBytes { get; set; }
         [ProtoMember(7)]
         public int ActiveLongPolls { get; set; }
+        [ProtoMember(8)] public int QueuedTasks {get;set;}
+        [ProtoMember(9)] public int RunningTasks {get;set;}
+        [ProtoMember(10)] public int WaitingWorkers {get;set;}
+        [ProtoMember(11)] public int BusyWorkers {get;set;}
+        [ProtoMember(12)] public long AssignmentsTotal {get;set;}
+        [ProtoMember(13)] public System.Collections.Generic.Dictionary<string,long> AssignmentsByWorker {get;set;}
+        [ProtoMember(14)] public System.Collections.Generic.Dictionary<string,long> CompletedTasksByWorker {get;set;}
+        [ProtoMember(15)] public int ActiveUploads {get;set;}
+        [ProtoMember(16)] public int PreparedArtifacts {get;set;}
+        [ProtoMember(17)] public int ActiveDownloads {get;set;}
+        [ProtoMember(18)] public long DownloadedBytes {get;set;}
+        [ProtoMember(19)] public double UploadBytesPerSecond {get;set;}
+        [ProtoMember(20)] public double DownloadBytesPerSecond {get;set;}
+        [ProtoMember(21)] public double ManagerShaDurationMs {get;set;}
+        [ProtoMember(22)] public System.Collections.Generic.Dictionary<string,double> AverageProcessingWallMsByWorker {get;set;}
     }
 }

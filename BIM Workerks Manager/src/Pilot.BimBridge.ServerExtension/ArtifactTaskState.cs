@@ -9,12 +9,13 @@ namespace Pilot.BimBridge.ServerExtension
     internal sealed class StoredArtifactTaskState
     {
         public Guid TaskId,ClientRequestId;
-        public string State,OperationCode;
+        public string State,OperationCode,ExecutionWorkerInstanceId;
+        public double? WorkerProcessingWallMs;
         public DateTime CreatedAtUtc;
         public DateTime? CompletedAtUtc;
         public BimTaskErrorDto Error;
         public TaskRecord ToTask()=>new TaskRecord {TaskId=TaskId,ClientRequestId=ClientRequestId,State=State,
-            OperationCode=OperationCode,CreatedAtUtc=CreatedAtUtc,CompletedAtUtc=CompletedAtUtc,Error=Error};
+            OperationCode=OperationCode,CreatedAtUtc=CreatedAtUtc,CompletedAtUtc=CompletedAtUtc,Error=Error,ExecutionWorkerInstanceId=ExecutionWorkerInstanceId,WorkerProcessingWallMs=WorkerProcessingWallMs};
     }
     internal sealed partial class FileSystemBimResultStore
     {
@@ -23,7 +24,7 @@ namespace Pilot.BimBridge.ServerExtension
         {
             Directory.CreateDirectory(TaskStateRoot);
             var state=new StoredArtifactTaskState {TaskId=task.TaskId,ClientRequestId=task.ClientRequestId,State=task.State,
-                OperationCode=task.OperationCode,CreatedAtUtc=task.CreatedAtUtc,CompletedAtUtc=task.CompletedAtUtc,Error=task.Error};
+                OperationCode=task.OperationCode,CreatedAtUtc=task.CreatedAtUtc,CompletedAtUtc=task.CompletedAtUtc,Error=task.Error,ExecutionWorkerInstanceId=task.ExecutionWorkerInstanceId,WorkerProcessingWallMs=task.WorkerProcessingWallMs};
             var path=Path.Combine(TaskStateRoot,task.TaskId.ToString("N")+".json");var temporary=path+".tmp";
             File.WriteAllText(temporary,JsonConvert.SerializeObject(state));
             using(var stream=new FileStream(temporary,FileMode.Open,FileAccess.ReadWrite,FileShare.None))stream.Flush(true);
