@@ -74,6 +74,16 @@ namespace Pilot.BimBridge.IntegrationTests
             })));
             Assert.That(seen.Keys,Is.EquivalentTo(tasks));Assert.That(seen.Values.All(n=>n==1),Is.True);
             Assert.That(_runtime.GetStatistics().CompletedTasksByWorker.Values.Sum(),Is.EqualTo(20));
+            Assert.That(_runtime.GetStatistics().EligibleWorkers,Is.Zero); // READ-only workers.
+        }
+        [Test] public void EligibleWorkersCountsOnlySpatialCapableOnlineRegistrations()
+        {
+            Register("read-only");
+            _runtime.Register(new RegisterWorkerRequestDto {ProtocolVersion="1.0",WorkerInstanceId="spatial",
+                AvailableModelKeys=new[]{"MODEL"},Capabilities=new[]{ArtifactProtocol.ExportSpatial,ArtifactProtocol.BinarySpatial}});
+            Assert.That(_runtime.GetStatistics().EligibleWorkers,Is.EqualTo(1));
+            _clock.Advance(TimeSpan.FromSeconds(46));_runtime.RunLeaseCheck();
+            Assert.That(_runtime.GetStatistics().EligibleWorkers,Is.Zero);
         }
         [Test] public async Task NoTaskAssignedTwice()
         {

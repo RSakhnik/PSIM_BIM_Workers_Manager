@@ -24,8 +24,12 @@
     <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/SpatialSourceContracts.cs" Link="Worker/SpatialSourceContracts.cs" />
     <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/ElementKey.cs" Link="Worker/ElementKey.cs" />
     <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/BulkSelection.cs" Link="Worker/BulkSelection.cs" />
+    <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/SnapshotElementIndexCache.cs" Link="Worker/SnapshotElementIndexCache.cs" />
+    <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/MeshGeometryCache.cs" Link="Worker/MeshGeometryCache.cs" />
+    <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/SpatialPerformanceMetrics.cs" Link="Worker/SpatialPerformanceMetrics.cs" />
     <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/PagedSearch.cs" Link="Worker/PagedSearch.cs" />
     <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/SpatialSdkCursor.cs" Link="Worker/SpatialSdkCursor.cs" />
+    <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/SpatialSdkSource.cs" Link="Worker/SpatialSdkSource.cs" />
     <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/SearchRequests.cs" Link="Worker/SearchRequests.cs" />
     <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/SearchFilters.cs" Link="Worker/SearchFilters.cs" />
     <Compile Include="../../../../AdvancedTools-PSIM_ADMIN-/AdvancedTools/BimBridge/ModelSnapshotPolicy.cs" Link="Worker/ModelSnapshotPolicy.cs" />

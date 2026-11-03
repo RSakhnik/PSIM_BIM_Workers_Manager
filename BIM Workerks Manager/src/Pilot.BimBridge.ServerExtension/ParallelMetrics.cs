@@ -31,6 +31,9 @@ namespace Pilot.BimBridge.ServerExtension
             result.RunningTasks=_tasks.Values.Count(t=>t.State==BimTaskStates.Assigned||t.State==BimTaskStates.Running||t.State==BimTaskStates.CancelRequested);
             result.WaitingWorkers=_waiters.Count;
             result.BusyWorkers=_workers.Values.Count(w=>!w.IsStale&&w.CurrentTaskId.HasValue);
+            result.EligibleWorkers=_workers.Values.Count(w=>!w.IsStale&&w.State!=BimWorkerStates.Offline&&
+                w.State!=BimWorkerStates.Unregistered&&w.Models.Count>0&&
+                w.Capabilities.Contains(ArtifactProtocol.ExportSpatial)&&w.Capabilities.Contains(ArtifactProtocol.BinarySpatial));
             result.AssignmentsByWorker=new Dictionary<string,long>(_assignmentsByWorker);
             result.AssignmentsTotal=_assignmentsByWorker.Values.Sum();
             result.CompletedTasksByWorker=new Dictionary<string,long>(_completedByWorker);

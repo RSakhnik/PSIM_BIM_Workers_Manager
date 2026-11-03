@@ -159,7 +159,9 @@ namespace Pilot.BimBridge.ServerExtension
                 foreach (var path in Directory.EnumerateFiles(_root, "result.bin", SearchOption.AllDirectories))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    total += new FileInfo(path).Length;
+                    try { total += new FileInfo(path).Length; }
+                    catch (FileNotFoundException) { }
+                    catch (DirectoryNotFoundException) { }
                 }
             }
             return Task.FromResult(total);

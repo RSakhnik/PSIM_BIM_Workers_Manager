@@ -78,6 +78,11 @@ namespace AdvancedTools.BimBridge
         public Guid[] Parts={Guid.Parse("22222222-2222-4222-8222-222222222222"),Guid.Parse("44444444-4444-4444-8444-444444444444")};
         public DateTime Version=new DateTime(2026,1,1,0,0,0,DateTimeKind.Utc);
         public int ElementsPerPart=5;
+        public bool SpatialFixture,MalformedNormals;
+        public int SpatialInstancesPerNode=1;
+        public int LoadElementCalls,InstanceOpens,ChildOpens,MeshOpens,VertexReads,NormalReads,IndexReads,EdgeReads;
+        public Action OnSpatialOpen;
+        public readonly Guid SharedMesh=Guid.Parse("55555555-5555-4555-8555-555555555555");
         public long Enumerated;
         public int MissingOrdinal=-1;
         public Action AfterPropertyRead;
@@ -93,8 +98,17 @@ namespace AdvancedTools.BimBridge
                     case "GetVersions":return new[]{Version};
                     case "LoadElements":return Elements((Guid)args[0]);
                     case "LoadElement":
+                        LoadElementCalls++;
                         var id=(IModelElementId)args[0];return id.ElementId==ElementId(MissingOrdinal)?null:Element(id.ModelPartId,id.ElementId);
                     case "LoadElementProperties":AfterPropertyRead?.Invoke();return PropertySets();
+                    case "LoadElementMeshInstances":
+                        InstanceOpens++;OnSpatialOpen?.Invoke();
+                        return SpatialFixture?Enumerable.Repeat(MeshInstance(((IModelElementId)args[0]).ElementId),SpatialInstancesPerNode).ToArray():Array.Empty<IMeshInstance>();
+                    case "LoadChildElements":
+                        ChildOpens++;OnSpatialOpen?.Invoke();
+                        return SpatialFixture&&((IModelElementId)args[0]).ElementId==ElementId(0)
+                            ?new[]{Element(((IModelElementId)args[0]).ModelPartId,ElementId(1))}:Array.Empty<IModelElement>();
+                    case "LoadMeshDefinition":MeshOpens++;return SpatialFixture?MeshDefinition():null;
                     default:return FakeProxy.Default(method.ReturnType);
                 }
             });
@@ -104,6 +118,23 @@ namespace AdvancedTools.BimBridge
         {for(var number=0;number<ElementsPerPart;number++) {Enumerated++;yield return Element(part,ElementId(number));}}
         private IModelElement Element(Guid part,Guid element)=>FakeProxy.Create<IModelElement>((method,args)=>
             method.Name=="get_Id"?new ModelElementId(part,element):method.Name=="get_Version"?(object)Version:FakeProxy.Default(method.ReturnType));
+        private IMeshInstance MeshInstance(Guid element)=>FakeProxy.Create<IMeshInstance>((method,args)=>
+        {
+            if(method.Name=="get_MeshDefinitionId")return FakeProxy.Create<IMeshDefinitionId>((m,a)=>m.Name=="get_MeshId"?SharedMesh:m.Name=="get_ModelPartId"?Parts[0]:FakeProxy.Default(m.ReturnType));
+            if(method.Name=="get_Placement")return element==ElementId(0) ? new Matrix4x4(1,0,0,10,0,1,0,2,0,0,1,3,0,0,0,1) : new Matrix4x4(0,-1,0,20,1,0,0,2,0,0,1,3,0,0,0,1);
+            return FakeProxy.Default(method.ReturnType);
+        });
+        private IMeshDefinition MeshDefinition()=>FakeProxy.Create<IMeshDefinition>((method,args)=>
+        {
+            switch(method.Name)
+            {
+                case "get_Vertices":VertexReads++;return new float[]{0,0,0,1,0,0,0,1,0};
+                case "get_Normals":NormalReads++;return MalformedNormals?new float[]{0,0,1}:new float[]{0,0,1,0,0,1,0,0,1};
+                case "get_Indices":IndexReads++;return new uint[]{0,1,2};
+                case "get_EdgeIndices":EdgeReads++;return new uint[]{0,1};
+                default:return FakeProxy.Default(method.ReturnType);
+            }
+        });
         private IEnumerable<IPropertySet> PropertySets()
         {
             IProperty Property(string name,object value)=>FakeProxy.Create<IProperty>((method,args)=>method.Name=="get_Name"?name:method.Name=="get_Value"?value:FakeProxy.Default(method.ReturnType));

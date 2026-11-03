@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using ProtoBuf;
@@ -622,5 +622,7 @@ namespace Pilot.BimBridge.Contracts
         [ProtoMember(20)] public double DownloadBytesPerSecond {get;set;}
         [ProtoMember(21)] public double ManagerShaDurationMs {get;set;}
         [ProtoMember(22)] public System.Collections.Generic.Dictionary<string,double> AverageProcessingWallMsByWorker {get;set;}
+        // Model-agnostic export-spatial eligibility; clients filter model keys separately.
+        [ProtoMember(23)] public int EligibleWorkers {get;set;}
     }
 }
