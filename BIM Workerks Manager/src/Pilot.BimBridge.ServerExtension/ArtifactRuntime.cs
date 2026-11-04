@@ -14,23 +14,6 @@ namespace Pilot.BimBridge.ServerExtension
         private static bool ValidDuration(double value)=>!double.IsNaN(value)&&!double.IsInfinity(value)&&value>=0;
         private static bool ValidDuration(double? value)=>!value.HasValue||ValidDuration(value.Value);
         private static bool ValidCount(long? value)=>!value.HasValue||value.Value>=0;
-        private static bool ValidSpatialPerformance(SpatialTaskPerformanceDto profile,BeginResultUploadRequestDto descriptor)
-        {
-            return profile.SchemaVersion==1 && profile.TaskId==descriptor.TaskId &&
-                profile.AssignmentId==descriptor.AssignmentId && profile.AttemptNumber>=1 &&
-                profile.SourceElements>=0 && profile.TraversedNodes>=0 && profile.Instances>=0 &&
-                profile.UniqueMeshes>=0 && ValidCount(profile.MeshCacheHits) && ValidCount(profile.MeshCacheMisses) &&
-                ValidCount(profile.SnapshotIndexHits) && ValidCount(profile.SnapshotIndexMisses) &&
-                ValidCount(profile.WorkerMeshCacheEntries) && ValidCount(profile.WorkerMeshCacheBytes) &&
-                ValidCount(profile.WorkerMeshCacheEvictions) && ValidCount(profile.WorkerSnapshotIndexEntries) &&
-                ValidCount(profile.WorkerSnapshotIndexBytes) && ValidCount(profile.WorkerSnapshotIndexEvictions) &&
-                ValidDuration(profile.SdkTraversalReadMs) && ValidDuration(profile.SdkMeshAcquireMs) &&
-                ValidDuration(profile.SdkVerticesReadMs) && ValidDuration(profile.BoundsCpuMs) &&
-                ValidDuration(profile.BinaryEncodingActiveMs) && ValidDuration(profile.ArtifactWriteWallMs) &&
-                ValidDuration(profile.ArtifactFinalizeWallMs) && ValidDuration(profile.ModelAccessWallMs) &&
-                ValidDuration(profile.SnapshotIndexWallMs) && ValidDuration(profile.SdkDispatchWaitWallMs) &&
-                ValidDuration(profile.SpoolPreparationWallMs);
-        }
         private FileSystemBimResultStore ArtifactStore => _results as FileSystemBimResultStore
             ?? throw new InvalidOperationException("Resumable artifacts require a durable result store.");
 
@@ -101,22 +84,29 @@ namespace Pilot.BimBridge.ServerExtension
                     var error = ValidateTransferOwnerLocked(identity);
                     if (error != null) return new ArtifactUploadStatusDto { Error = error };
                 }
-                if(request.WorkerProcessingWallMs.HasValue && (double.IsNaN(request.WorkerProcessingWallMs.Value)||
-                    double.IsInfinity(request.WorkerProcessingWallMs.Value)||request.WorkerProcessingWallMs.Value<0))
-                    return ResponseErrors.Error<ArtifactUploadStatusDto>("INVALID_REQUEST","Processing duration must be finite and nonnegative.");
+                var processingWall=ValidDuration(request.WorkerProcessingWallMs)?request.WorkerProcessingWallMs:null;
+                if(request.WorkerProcessingWallMs.HasValue && !processingWall.HasValue)
+                    _log.Warning("Invalid optional processing duration ignored for task " + request.Descriptor.TaskId);
                 var descriptor = request.Descriptor;
                 var performance=request.SpatialPerformance;
-                if(performance!=null && !ValidSpatialPerformance(performance,descriptor))
+                if(performance!=null && (performance.TaskId!=descriptor.TaskId ||
+                    performance.AssignmentId!=descriptor.AssignmentId))
                 {
-                    _log.Warning("Invalid spatial performance profile ignored for task " + descriptor.TaskId);
+                    _log.Warning("Legacy diagnostic identity mismatch for task " + descriptor.TaskId);
                     performance=null;
                 }
+                var diagnostics=DiagnosticTransport.Accept(request.Diagnostics);
+                if(request.Diagnostics!=null && diagnostics==null)
+                    _log.Warning("Invalid optional diagnostic payload ignored for task " + descriptor.TaskId);
                 if (descriptor.TotalLength > _options.Results.MaxArtifactBytes)
                     return ResponseErrors.Error<ArtifactUploadStatusDto>("RESULT_TOO_LARGE", "Artifact exceeds the configured byte limit.");
                 if (descriptor.TotalLength < 0 ||
                     descriptor.Sha256 == null || descriptor.Sha256.Length != 64 || !descriptor.Sha256.All(Uri.IsHexDigit))
                     return ResponseErrors.Error<ArtifactUploadStatusDto>("INVALID_REQUEST", "A bounded artifact with SHA-256 is required.");
                 var previous = await ArtifactStore.LoadUploadAsync(request.TransferId, token).ConfigureAwait(false);
+                if(previous!=null && request.Diagnostics!=null &&
+                    !DiagnosticTransport.Same(previous.Diagnostics,diagnostics))
+                    _log.Warning("Conflicting retry diagnostic payload ignored for transfer " + request.TransferId);
                 var reservation = ArtifactStore.ReadReservation(request.TransferId);
                 if(previous==null)
                 {
@@ -168,8 +158,9 @@ namespace Pilot.BimBridge.ServerExtension
                     upload = new UploadRecord { UploadId = request.TransferId, TaskId = descriptor.TaskId,
                         AssignmentId = descriptor.AssignmentId, RegistrationId = descriptor.RegistrationId,
                         WorkerInstanceId = request.WorkerInstanceId, TotalLength = descriptor.TotalLength,
-                        WorkerProcessingWallMs=previous?.WorkerProcessingWallMs??request.WorkerProcessingWallMs,
+                        WorkerProcessingWallMs=previous?.WorkerProcessingWallMs??processingWall,
                         SpatialPerformance=previous?.SpatialPerformance??performance,
+                        Diagnostics=previous==null?diagnostics:previous.Diagnostics,
                         QueueWaitMs=previous?.QueueWaitMs??task?.QueueWaitMs,
                         TotalChunks = descriptor.TotalChunks, ChunkSizeBytes = previous?.ChunkSizeBytes ?? _options.Results.ChunkSizeBytes,
                         Sha256 = descriptor.Sha256, ContentType = descriptor.ContentType, ContentEncoding = descriptor.ContentEncoding,
@@ -183,6 +174,7 @@ namespace Pilot.BimBridge.ServerExtension
                         task.PreparedAtUtc=_clock.UtcNow;
                         task.WorkerProcessingWallMs=upload.WorkerProcessingWallMs;
                         task.SpatialPerformance=upload.SpatialPerformance;
+                        task.Diagnostics=upload.Diagnostics;
                         task.QueueWaitMs=upload.QueueWaitMs;
                         task.State = ArtifactProtocol.ResultPrepared;
                         task.UploadId = upload.UploadId;
@@ -226,7 +218,7 @@ namespace Pilot.BimBridge.ServerExtension
                             State = ArtifactProtocol.ResultPrepared, UploadId = upload.UploadId,
                             PreparedAtUtc=upload.CreatedAtUtc,
                             ExecutionWorkerInstanceId=upload.WorkerInstanceId,WorkerProcessingWallMs=upload.WorkerProcessingWallMs,
-                            SpatialPerformance=upload.SpatialPerformance };
+                            SpatialPerformance=upload.SpatialPerformance,Diagnostics=upload.Diagnostics };
                         _tasks[upload.TaskId].QueueWaitMs=upload.QueueWaitMs;
                         _clientRequests[upload.ClientRequestId] = upload.TaskId;
                     }
@@ -284,6 +276,7 @@ namespace Pilot.BimBridge.ServerExtension
                     }
                     task.WorkerProcessingWallMs=upload.WorkerProcessingWallMs;
                     task.SpatialPerformance=upload.SpatialPerformance;
+                    task.Diagnostics=upload.Diagnostics;
                     task.QueueWaitMs=upload.QueueWaitMs;
                     task.HashVerificationMs=metadata.HashVerificationMs;
                     if(metadata.ArtifactPublicationMs.HasValue)task.ArtifactPublicationMs=metadata.ArtifactPublicationMs;

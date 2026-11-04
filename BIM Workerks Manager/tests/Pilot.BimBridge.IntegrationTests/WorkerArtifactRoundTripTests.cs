@@ -14,9 +14,11 @@ namespace Pilot.BimBridge.IntegrationTests
 {
     public sealed class WorkerArtifactRoundTripTests
     {
-        [TestCase(1)]
-        [TestCase(3)]
-        public async Task TransferWindowDiagnostic(int window)
+        [TestCase(1,false)]
+        [TestCase(1,true)]
+        [TestCase(3,false)]
+        [TestCase(3,true)]
+        public async Task TransferWindowDiagnostic(int window,bool diagnostics)
         {
             var root=Path.Combine(Path.GetTempPath(),"bim-transfer-benchmark",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(root);
             try
@@ -33,17 +35,22 @@ namespace Pilot.BimBridge.IntegrationTests
                     var path=Path.Combine(root,"source");File.WriteAllBytes(path,bytes);
                     var settings=new WorkerSettings {ResultsDirectory=Path.Combine(root,"worker"),MaxInFlightChunks=window};
                     using var spool=new DurableArtifactSpool(settings,"bench",null);
-                    var artifact=spool.Prepare(new PreparedResult {Path=path,Length=bytes.Length,Sha256=hash},assigned.Assignment,options.Results.ChunkSizeBytes);
+                    var artifact=spool.Prepare(new PreparedResult {Path=path,Length=bytes.Length,Sha256=hash,
+                        SpatialPerformance=diagnostics?new SpatialTaskPerformanceDto {TaskId=assigned.Assignment.TaskId,
+                            AssignmentId=assigned.Assignment.AssignmentId,AttemptNumber=1,SourceElements=12}:null},
+                        assigned.Assignment,options.Results.ChunkSizeBytes);
                     var client=new FaultClient(runtime,false);var watch=System.Diagnostics.Stopwatch.StartNew();
                     await new ResumableArtifactUploader(client,settings,null).UploadAsync(artifact,registration,CancellationToken.None);
                     watch.Stop();spool.Remove(artifact);
                     Assert.That(client.Peak,Is.LessThanOrEqualTo(window));
+                    var diagnosticBytes=runtime.GetTaskStatus(assigned.Assignment.TaskId).Diagnostics?.PayloadBytes.Length??0;
                     var report=Newtonsoft.Json.JsonConvert.SerializeObject(new {Window=window,Bytes=bytes.Length,
                         ElapsedMilliseconds=watch.Elapsed.TotalMilliseconds,ChunkCalls=client.ChunkCalls,PeakInFlight=client.Peak,
-                        Retries=0,ResumedBytes=0,InjectedChunkLatencyMilliseconds=20},Newtonsoft.Json.Formatting.Indented);
+                        Retries=0,ResumedBytes=0,InjectedChunkLatencyMilliseconds=20,DiagnosticBytes=diagnosticBytes},Newtonsoft.Json.Formatting.Indented);
                     TestContext.WriteLine(report);
                     var output=Environment.GetEnvironmentVariable("BIM_BRIDGE_BENCHMARK_OUTPUT");
-                    if(!string.IsNullOrEmpty(output)) {Directory.CreateDirectory(output);File.WriteAllText(Path.Combine(output,"transfer-"+window+".json"),report);}
+                    if(!string.IsNullOrEmpty(output)) {Directory.CreateDirectory(output);File.WriteAllText(Path.Combine(output,
+                        "transfer-"+window+"-"+(diagnostics?"with":"without")+"-diagnostics.json"),report);}
                 }
             }
             finally {Directory.Delete(root,true);}
@@ -66,7 +73,9 @@ namespace Pilot.BimBridge.IntegrationTests
                     var source=Path.Combine(root,"source");File.WriteAllBytes(source,bytes);
                     var settings=new WorkerSettings {ResultsDirectory=Path.Combine(root,"worker"),MaxInFlightChunks=3};
                     using var spool=new DurableArtifactSpool(settings,"worker",null);
-                    var artifact=spool.Prepare(new PreparedResult {Path=source,Length=bytes.Length,Sha256=hash,ContentType="application/octet-stream"},wait.Assignment,4);
+                    var artifact=spool.Prepare(new PreparedResult {Path=source,Length=bytes.Length,Sha256=hash,ContentType="application/octet-stream",
+                        SpatialPerformance=new SpatialTaskPerformanceDto {TaskId=accepted.TaskId,
+                            AssignmentId=wait.Assignment.AssignmentId,AttemptNumber=1,SourceElements=5}},wait.Assignment,4);
                     var client=new FaultClient(runtime);
                     await new ResumableArtifactUploader(client,settings,null,null,spool.RecordRetry)
                         .UploadAsync(artifact,registration,CancellationToken.None);
@@ -77,6 +86,12 @@ namespace Pilot.BimBridge.IntegrationTests
                     var status=runtime.GetTaskStatus(accepted.TaskId);
                     Assert.That(status.UploadRetryCount,Is.EqualTo(2));
                     Assert.That(status.UploadRetryWaitMs,Is.GreaterThan(0));
+                    Assert.That(status.Diagnostics,Is.Not.Null);
+                    Assert.That(status.Diagnostics.ContentType,Is.EqualTo("application/vnd.pilot.bimbridge.spatial-performance+json"));
+                    var diagnosticText=System.Text.Encoding.UTF8.GetString(status.Diagnostics.PayloadBytes);
+                    Assert.That(Newtonsoft.Json.JsonConvert.DeserializeObject<SpatialTaskPerformanceDto>(diagnosticText).SourceElements,Is.EqualTo(5));
+                    using(var sha=SHA256.Create())Assert.That(BitConverter.ToString(sha.ComputeHash(status.Diagnostics.PayloadBytes)).Replace("-",""),
+                        Is.EqualTo(status.Diagnostics.Sha256));
                     Assert.That(client.Peak,Is.InRange(2,3));
                     Assert.That(spool.Pending().Length,Is.EqualTo(1)); // uploader cannot delete before caller observes completion
                     var metadata=await runtime.GetResultMetadataAsync(accepted.TaskId,CancellationToken.None);

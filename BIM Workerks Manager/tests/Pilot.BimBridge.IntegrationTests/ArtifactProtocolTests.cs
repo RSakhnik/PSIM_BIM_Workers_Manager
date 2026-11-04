@@ -73,7 +73,7 @@ namespace Pilot.BimBridge.IntegrationTests
             Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).UploadWallMs,Is.EqualTo(7.25));
             Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).UploadRetryCount,Is.EqualTo(2));
             Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).UploadRetryWaitMs,Is.EqualTo(3.5));
-            Assert.That(_runtime.GetStatistics().AverageProcessingWallMsByWorker["stable-worker"],Is.EqualTo(12.5));
+            Assert.That(_runtime.GetStatistics().AverageProcessingWallMsByWorker,Is.Empty);
             _runtime.Dispose();_runtime=Runtime();
             Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).ProcessingWallMs,Is.EqualTo(12.5));
             Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).WorkerInstanceId,Is.EqualTo("stable-worker"));
@@ -98,23 +98,69 @@ namespace Pilot.BimBridge.IntegrationTests
             Assert.That((await _runtime.BeginOrResumeArtifactAsync(_begin,Token)).IsSuccess,Is.True);
             Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).ProcessingWallMs,Is.Null);
         }
-        [Test] public async Task InvalidTelemetryDoesNotBlockArtifact()
+        [Test] public async Task InvalidProcessingDurationDoesNotBlockArtifact()
+        {
+            _begin.WorkerProcessingWallMs=double.NaN;
+            Assert.That((await _runtime.BeginOrResumeArtifactAsync(_begin,Token)).IsSuccess,Is.True);
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).ProcessingWallMs,Is.Null);
+        }
+        [Test] public async Task LegacyTelemetryPassesWithoutSdkValidation()
         {
             _begin.SpatialPerformance=new SpatialTaskPerformanceDto {TaskId=_begin.Descriptor.TaskId,
                 AssignmentId=_begin.Descriptor.AssignmentId,AttemptNumber=1,
                 BinaryEncodingActiveMs=double.NaN};
             Assert.That((await _runtime.BeginOrResumeArtifactAsync(_begin,Token)).IsSuccess,Is.True);
-            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).SpatialPerformance,Is.Null);
+            Assert.That(double.IsNaN(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).SpatialPerformance.BinaryEncodingActiveMs.Value),Is.True);
         }
         [TestCase(double.NaN,0)]
         [TestCase(1.0,-1)]
-        public async Task InvalidSnapshotIndexTelemetryDoesNotBlockArtifact(double wallMs,long hits)
+        public async Task LegacySnapshotIndexTelemetryIsNotInterpreted(double wallMs,long hits)
         {
             _begin.SpatialPerformance=new SpatialTaskPerformanceDto {TaskId=_begin.Descriptor.TaskId,
                 AssignmentId=_begin.Descriptor.AssignmentId,AttemptNumber=1,
                 SnapshotIndexWallMs=wallMs,SnapshotIndexHits=hits};
             Assert.That((await _runtime.BeginOrResumeArtifactAsync(_begin,Token)).IsSuccess,Is.True);
-            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).SpatialPerformance,Is.Null);
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).SpatialPerformance.SnapshotIndexHits,Is.EqualTo(hits));
+        }
+        private static DiagnosticEnvelopeDto Envelope(byte[] bytes,int version=1) => new DiagnosticEnvelopeDto {
+            ContentType="application/vnd.example.unknown+json",SchemaVersion=version,
+            PayloadBytes=bytes,Sha256=Hash(bytes)};
+        [Test] public async Task OpaqueDiagnosticsRoundTripAcrossResumeAndRestart()
+        {
+            var payload=new byte[]{0,1,2,3,4,255};
+            _begin.Diagnostics=Envelope(payload,77);
+            Assert.That((await _runtime.BeginOrResumeArtifactAsync(_begin,Token)).IsSuccess,Is.True);
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).Diagnostics.PayloadBytes,Is.EqualTo(payload));
+            await Chunk(0,new byte[]{1,2,3,4});
+            _runtime.Dispose();_runtime=Runtime();_registration=Register();_begin.Descriptor.RegistrationId=_registration;
+            Assert.That((await _runtime.BeginOrResumeArtifactAsync(_begin,Token)).MissingRanges[0].Start,Is.EqualTo(1));
+            await Chunk(1,new byte[]{5,6});
+            Assert.That((await _runtime.CompleteArtifactAsync(Identity(),Token)).IsSuccess,Is.True);
+            var status=_runtime.GetTaskStatus(_begin.Descriptor.TaskId);
+            Assert.That(status.Diagnostics.SchemaVersion,Is.EqualTo(77));
+            Assert.That(status.Diagnostics.PayloadBytes,Is.EqualTo(payload));
+            Assert.That(status.Diagnostics.Sha256,Is.EqualTo(Hash(payload)));
+            _runtime.Dispose();_runtime=Runtime();
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).Diagnostics.PayloadBytes,Is.EqualTo(payload));
+        }
+        [Test] public async Task ConflictingRetryDiagnosticsCannotReplaceFirstPayload()
+        {
+            _begin.Diagnostics=Envelope(new byte[]{8});
+            Assert.That((await _runtime.BeginOrResumeArtifactAsync(_begin,Token)).IsSuccess,Is.True);
+            _begin.Diagnostics=Envelope(new byte[]{9});
+            Assert.That((await _runtime.BeginOrResumeArtifactAsync(_begin,Token)).IsSuccess,Is.True);
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).Diagnostics.PayloadBytes,Is.EqualTo(new byte[]{8}));
+        }
+        [Test] public async Task InvalidOrOversizeDiagnosticsDoNotBlockArtifact()
+        {
+            _begin.Diagnostics=Envelope(new byte[]{1});_begin.Diagnostics.Sha256=Hash(new byte[]{2});
+            Assert.That((await _runtime.BeginOrResumeArtifactAsync(_begin,Token)).IsSuccess,Is.True);
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).Diagnostics,Is.Null);
+            _begin.Diagnostics=Envelope(new byte[DiagnosticTransport.MaxPayloadBytes+1]);
+            Assert.That((await _runtime.BeginOrResumeArtifactAsync(_begin,Token)).IsSuccess,Is.True);
+            await Chunk(0,new byte[]{1,2,3,4});await Chunk(1,new byte[]{5,6});
+            Assert.That((await _runtime.CompleteArtifactAsync(Identity(),Token)).IsSuccess,Is.True);
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).Diagnostics,Is.Null);
         }
         [Test] public async Task InvalidUploadRetryTelemetryDoesNotBlockCompletion()
         {

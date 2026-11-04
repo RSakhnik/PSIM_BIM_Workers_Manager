@@ -496,6 +496,7 @@ namespace Pilot.BimBridge.Contracts
         [ProtoMember(22)] public double? ResultPreparationWallMs {get;set;}
         [ProtoMember(23)] public int? UploadRetryCount {get;set;}
         [ProtoMember(24)] public double? UploadRetryWaitMs {get;set;}
+        [ProtoMember(25)] public DiagnosticEnvelopeDto Diagnostics {get;set;}
     }
 
     [ProtoContract]
@@ -516,6 +517,7 @@ namespace Pilot.BimBridge.Contracts
         [ProtoMember(13)] public double? ResultPreparationWallMs {get;set;}
         [ProtoMember(14)] public int? UploadRetryCount {get;set;}
         [ProtoMember(15)] public double? UploadRetryWaitMs {get;set;}
+        [ProtoMember(16)] public DiagnosticEnvelopeDto Diagnostics {get;set;}
     }
 
     [ProtoContract]

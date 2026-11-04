@@ -43,6 +43,17 @@ namespace Pilot.BimBridge.Contracts
         [ProtoMember(3)] public BeginResultUploadRequestDto Descriptor { get; set; }
         [ProtoMember(4)] public double? WorkerProcessingWallMs {get;set;}
         [ProtoMember(5)] public SpatialTaskPerformanceDto SpatialPerformance {get;set;}
+        [ProtoMember(6)] public DiagnosticEnvelopeDto Diagnostics {get;set;}
+    }
+
+    // The Manager stores this bounded payload without interpreting worker-specific fields.
+    [ProtoContract]
+    public sealed class DiagnosticEnvelopeDto
+    {
+        [ProtoMember(1)] public string ContentType {get;set;}
+        [ProtoMember(2)] public int SchemaVersion {get;set;}
+        [ProtoMember(3)] public byte[] PayloadBytes {get;set;}
+        [ProtoMember(4)] public string Sha256 {get;set;}
     }
 
     [ProtoContract]

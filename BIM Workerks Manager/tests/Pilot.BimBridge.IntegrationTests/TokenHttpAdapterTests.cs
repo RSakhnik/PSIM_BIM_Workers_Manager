@@ -63,8 +63,12 @@ namespace Pilot.BimBridge.IntegrationTests
             var metadata=JObject.Parse(await _http.GetStringAsync("tasks/"+task+"/result/metadata"));
             Assert.That((string)metadata["DownloadProtocol"],Is.EqualTo("token-http-chunks-v2"));
             Assert.That(await _http.GetByteArrayAsync("tasks/"+task+"/result"),Is.EqualTo(data));
-            var first=await _http.GetStringAsync("tasks/"+task+"/result/chunks/0");
-            Assert.That(await _http.GetStringAsync("tasks/"+task+"/result/chunks/0"),Is.EqualTo(first));
+            var first=JObject.Parse(await _http.GetStringAsync("tasks/"+task+"/result/chunks/0"));
+            var repeated=JObject.Parse(await _http.GetStringAsync("tasks/"+task+"/result/chunks/0"));
+            Assert.That((string)first["TaskId"],Is.EqualTo((string)repeated["TaskId"]));
+            Assert.That((int)first["ChunkIndex"],Is.EqualTo((int)repeated["ChunkIndex"]));
+            Assert.That((string)first["Data"],Is.EqualTo((string)repeated["Data"]));
+            Assert.That((bool)first["IsLast"],Is.EqualTo((bool)repeated["IsLast"]));
         }
         [Test] public async Task RejectsInvalidAndOversizedJsonAndSupportsCancellation()
         {

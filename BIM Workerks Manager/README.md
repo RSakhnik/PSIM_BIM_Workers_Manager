@@ -33,6 +33,14 @@ stdio процесс без сетевого listener. Он не подключ�
 `BimBridgeRuntime.cs`; методы прежнего upload/download API — в
 `LegacyArtifactRuntime.cs`; resumable artifact v2 — в `ArtifactRuntime.cs`.
 `ArtifactTaskState.cs` сохраняет состояние и профиль попыток на диске.
+`DiagnosticTransport.cs` ограничивает размер необязательной диагностики 64 KiB,
+проверяет content type и SHA-256, но не разбирает схему worker. Envelope хранится
+вместе с upload/task state и удаляется по действующему TTL задачи и результата.
+Новый worker отправляет его вместе с прежним `SpatialPerformance` для переходной
+совместимости. Manager сохраняет старое поле без анализа SDK timings; PSIMpy
+проверяет и интерпретирует известную схему. Поле статистики
+`AverageProcessingWallMsByWorker` сохранено в контракте, но больше не вычисляется:
+производительность обработки рассчитывает PSIMpy по профилям задач.
 `TokenHttpAdapter.cs` лишь адаптирует существующий token endpoint к этому runtime.
 Новые поля telemetry в `Contracts` добавлены без смены занятых protobuf tags;
 отсутствующие длительности остаются nullable. Manager измеряет свои интервалы
@@ -43,6 +51,8 @@ durable artifact и не выводятся из разницы глобальн
 `Ascon.Pilot.ServerExtensions.SDK` версии `26.10.0`.
 
 ## Сборка
+
+Подготовка согласованных версий, установка и rollback: [release-readiness.md](docs/release-readiness.md).
 
 ```powershell
 dotnet build Pilot.BimBridge.sln --configuration Release

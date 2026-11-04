@@ -50,8 +50,12 @@ namespace Pilot.BimBridge.UnitTests
                     AssignmentId=Guid.NewGuid(),AttemptQueueWaitMs=1.75,
                     TaskAcceptanceWallMs=0.5,AssignmentWallMs=0.75,ResultPreparationWallMs=1.5,
                     UploadRetryCount=2,UploadRetryWaitMs=3.5,
+                    Diagnostics=new DiagnosticEnvelopeDto {ContentType="application/vnd.example+json",SchemaVersion=42,
+                        PayloadBytes=new byte[]{1,2},Sha256=new string('A',64)},
                     PriorAttempts=new[]{new TaskAttemptTelemetryDto {AttemptNumber=1,
                         AssignmentId=Guid.NewGuid(),WorkerInstanceId="old",QueueWaitMs=2.25,
+                        Diagnostics=new DiagnosticEnvelopeDto {ContentType="application/octet-stream",SchemaVersion=3,
+                            PayloadBytes=new byte[]{9},Sha256=new string('B',64)},
                         AssignmentWallMs=0.25,ResultPreparationWallMs=0.5}}});
                 stream.Position=0;var old=(OldStatus)Serializer.Deserialize<OldResponse>(stream);
                 Assert.That(old.TaskId,Is.EqualTo(id));Assert.That(old.State,Is.EqualTo("COMPLETED"));
@@ -69,6 +73,8 @@ namespace Pilot.BimBridge.UnitTests
                 Assert.That(updated.ResultPreparationWallMs,Is.EqualTo(1.5));
                 Assert.That(updated.UploadRetryCount,Is.EqualTo(2));
                 Assert.That(updated.UploadRetryWaitMs,Is.EqualTo(3.5));
+                Assert.That(updated.Diagnostics.PayloadBytes,Is.EqualTo(new byte[]{1,2}));
+                Assert.That(updated.PriorAttempts[0].Diagnostics.PayloadBytes,Is.EqualTo(new byte[]{9}));
                 Assert.That(updated.PriorAttempts[0].AssignmentWallMs,Is.EqualTo(0.25));
                 Assert.That(updated.PriorAttempts[0].ResultPreparationWallMs,Is.EqualTo(0.5));
             }
@@ -76,9 +82,12 @@ namespace Pilot.BimBridge.UnitTests
         [Test] public void WorkerMeasuredDurationIsAnOptionalAdditivePrepareField()
         {
             var current=Serializer.DeepClone(new BeginArtifactUploadDto {TransferId=Guid.NewGuid(),WorkerProcessingWallMs=12.5,
-                SpatialPerformance=new SpatialTaskPerformanceDto {SourceElements=4}});
+                SpatialPerformance=new SpatialTaskPerformanceDto {SourceElements=4},
+                Diagnostics=new DiagnosticEnvelopeDto {ContentType="application/octet-stream",SchemaVersion=7,
+                    PayloadBytes=new byte[]{3,4},Sha256=new string('C',64)}});
             Assert.That(current.WorkerProcessingWallMs,Is.EqualTo(12.5));
             Assert.That(current.SpatialPerformance.SourceElements,Is.EqualTo(4));
+            Assert.That(current.Diagnostics.PayloadBytes,Is.EqualTo(new byte[]{3,4}));
             Assert.That(Serializer.DeepClone(new BeginArtifactUploadDto()).WorkerProcessingWallMs,Is.Null);
             using(var stream=new MemoryStream())
             {
@@ -88,6 +97,8 @@ namespace Pilot.BimBridge.UnitTests
                 Assert.That(Serializer.Deserialize<BeginArtifactUploadDto>(stream).WorkerProcessingWallMs,Is.Null);
                 stream.Position=0;
                 Assert.That(Serializer.Deserialize<BeginArtifactUploadDto>(stream).SpatialPerformance,Is.Null);
+                stream.Position=0;
+                Assert.That(Serializer.Deserialize<BeginArtifactUploadDto>(stream).Diagnostics,Is.Null);
             }
         }
         [Test] public void LegacyStatusDoesNotInventProcessingTime()

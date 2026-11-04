@@ -56,6 +56,10 @@ while((line=Console.ReadLine())!=null)
                     using var result=submit.OperationCode=="export-spatial"?await BinarySpatialTests.Build(settings.ResultsDirectory):
                         (PreparedResult)await new ExportElementsOperationHandler(models,settings,new ArtifactFileWriter(settings.ResultsDirectory,settings))
                             .ExecuteAsync(new TaskExecutionContext {Assignment=assigned.Assignment});
+                    if(submit.OperationCode=="export-spatial")
+                        result.SpatialPerformance=new SpatialTaskPerformanceDto {TaskId=accepted.TaskId,
+                            AssignmentId=assigned.Assignment.AssignmentId,AttemptNumber=1,SourceElements=1,
+                            TraversedNodes=1,Instances=1,UniqueMeshes=1};
                     var artifact=spool.Prepare(result,assigned.Assignment,options.Results.ChunkSizeBytes,reservation);
                     await uploader.UploadAsync(artifact,registration,CancellationToken.None);spool.Remove(artifact);
                 }

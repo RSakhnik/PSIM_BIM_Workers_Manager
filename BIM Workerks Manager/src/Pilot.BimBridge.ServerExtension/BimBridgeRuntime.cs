@@ -50,7 +50,7 @@ namespace Pilot.BimBridge.ServerExtension
                         CompletedAtUtc = metadata?.CreatedAtUtc, UploadId = metadata == null ? (Guid?)upload.UploadId : null,
                         PreparedAtUtc=upload.CreatedAtUtc,
                         WorkerProcessingWallMs=upload.WorkerProcessingWallMs,ExecutionWorkerInstanceId=upload.WorkerInstanceId,
-                        SpatialPerformance=upload.SpatialPerformance,QueueWaitMs=upload.QueueWaitMs,
+                        SpatialPerformance=upload.SpatialPerformance,Diagnostics=upload.Diagnostics,QueueWaitMs=upload.QueueWaitMs,
                         HashVerificationMs=metadata?.HashVerificationMs,ArtifactPublicationMs=metadata?.ArtifactPublicationMs };
                     _clientRequests[upload.ClientRequestId] = upload.TaskId;
                     if (metadata == null) _uploads[upload.UploadId] = upload;
@@ -333,6 +333,7 @@ namespace Pilot.BimBridge.ServerExtension
                     WorkerInstanceId=task.ExecutionWorkerInstanceId,
                     ProcessingWallMs=task.WorkerProcessingWallMs,
                     SpatialPerformance=task.SpatialPerformance,
+                    Diagnostics=task.Diagnostics,
                     QueueWaitMs=task.QueueWaitMs,
                     AttemptQueueWaitMs=task.AttemptQueueWaitMs,
                     PriorAttempts=task.PriorAttempts.ToArray(),
@@ -811,6 +812,7 @@ namespace Pilot.BimBridge.ServerExtension
             task.ExecutionWorkerInstanceId=null;
             task.WorkerProcessingWallMs=null;
             task.SpatialPerformance=null;
+            task.Diagnostics=null;
             task.RegistrationId = null;
             task.AssignmentId = null;
             task.LeaseExpiresAtUtc = null;
@@ -830,7 +832,7 @@ namespace Pilot.BimBridge.ServerExtension
                 ResultPreparationWallMs=task.ResultPreparationWallMs,
                 UploadRetryCount=task.UploadRetryCount,UploadRetryWaitMs=task.UploadRetryWaitMs,
                 TaskError=task.Error,State=state,ProcessingWallMs=task.WorkerProcessingWallMs,
-                SpatialPerformance=task.SpatialPerformance
+                SpatialPerformance=task.SpatialPerformance,Diagnostics=task.Diagnostics
             });
         }
 

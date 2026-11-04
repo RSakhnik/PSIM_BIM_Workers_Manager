@@ -48,6 +48,7 @@ namespace Pilot.BimBridge.ServerExtension
         public double? UploadRetryWaitMs;
         public double? WorkerProcessingWallMs;
         public SpatialTaskPerformanceDto SpatialPerformance;
+        public DiagnosticEnvelopeDto Diagnostics;
         public int Priority;
         public string PayloadContentType;
         public string PayloadEncoding;
@@ -84,6 +85,7 @@ namespace Pilot.BimBridge.ServerExtension
         public double? QueueWaitMs;
         public double? WorkerProcessingWallMs;
         public SpatialTaskPerformanceDto SpatialPerformance;
+        public DiagnosticEnvelopeDto Diagnostics;
         public int ChunkSizeBytes;
         public string WorkerInstanceId;
         public string FileName;

@@ -26,6 +26,7 @@ namespace Pilot.BimBridge.ServerExtension
         public int? UploadRetryCount;
         public double? UploadRetryWaitMs;
         public SpatialTaskPerformanceDto SpatialPerformance;
+        public DiagnosticEnvelopeDto Diagnostics;
         public DateTime CreatedAtUtc;
         public DateTime? CompletedAtUtc;
         public DateTime? PreparedAtUtc;
@@ -37,7 +38,7 @@ namespace Pilot.BimBridge.ServerExtension
             PreparedAtUtc=PreparedAtUtc,AssignedAtUtc=AssignedAtUtc,StartedAtUtc=StartedAtUtc,
             AssignmentId=AssignmentId,UploadId=UploadId,AttemptNumber=AttemptNumber,Error=Error,
             ExecutionWorkerInstanceId=ExecutionWorkerInstanceId,WorkerProcessingWallMs=WorkerProcessingWallMs,
-            SpatialPerformance=SpatialPerformance,QueueWaitMs=QueueWaitMs,HashVerificationMs=HashVerificationMs,
+            SpatialPerformance=SpatialPerformance,Diagnostics=Diagnostics,QueueWaitMs=QueueWaitMs,HashVerificationMs=HashVerificationMs,
             AttemptQueueWaitMs=AttemptQueueWaitMs,PriorAttempts=PriorAttempts??new List<TaskAttemptTelemetryDto>(),
             TaskAcceptanceWallMs=TaskAcceptanceWallMs,AssignmentWallMs=AssignmentWallMs,
             ResultPreparationWallMs=ResultPreparationWallMs,
@@ -56,7 +57,7 @@ namespace Pilot.BimBridge.ServerExtension
                 PreparedAtUtc=task.PreparedAtUtc,AssignedAtUtc=task.AssignedAtUtc,StartedAtUtc=task.StartedAtUtc,
                 AssignmentId=task.AssignmentId,UploadId=task.UploadId,AttemptNumber=task.AttemptNumber,Error=task.Error,
                 ExecutionWorkerInstanceId=task.ExecutionWorkerInstanceId,WorkerProcessingWallMs=task.WorkerProcessingWallMs,
-                SpatialPerformance=task.SpatialPerformance,QueueWaitMs=task.QueueWaitMs,HashVerificationMs=task.HashVerificationMs,
+                SpatialPerformance=task.SpatialPerformance,Diagnostics=task.Diagnostics,QueueWaitMs=task.QueueWaitMs,HashVerificationMs=task.HashVerificationMs,
                 AttemptQueueWaitMs=task.AttemptQueueWaitMs,PriorAttempts=task.PriorAttempts,
                 TaskAcceptanceWallMs=task.TaskAcceptanceWallMs,AssignmentWallMs=task.AssignmentWallMs,
                 ResultPreparationWallMs=task.ResultPreparationWallMs,
