@@ -208,15 +208,19 @@ namespace Pilot.BimBridge.ServerExtension
                 if (new FileInfo(part).Length != upload.TotalLength)
                     throw new ResultStoreException("INTEGRITY_ERROR", "Artifact length mismatch.");
                 var shaStarted=System.Diagnostics.Stopwatch.GetTimestamp();
+                long shaTicks=0;
                 string hash;
                 try {hash = await CalculateSha256Async(part, token).ConfigureAwait(false);}
-                finally {Interlocked.Add(ref _shaTicks,System.Diagnostics.Stopwatch.GetTimestamp()-shaStarted);}
+                finally {shaTicks=System.Diagnostics.Stopwatch.GetTimestamp()-shaStarted;
+                    Interlocked.Add(ref _shaTicks,shaTicks);}
                 if (!string.IsNullOrEmpty(upload.Sha256) && !string.Equals(upload.Sha256, hash, StringComparison.OrdinalIgnoreCase))
                     throw new ResultStoreException("INTEGRITY_ERROR", "Artifact SHA-256 mismatch.");
+                var publicationStarted=System.Diagnostics.Stopwatch.GetTimestamp();
                 var metadata = new StoredResultMetadata { TaskId = upload.TaskId, ContentType = upload.ContentType,
                     ContentEncoding = upload.ContentEncoding, TotalLength = upload.TotalLength, TotalChunks = upload.TotalChunks,
                     ChunkSizeBytes = upload.ChunkSizeBytes, Sha256 = hash, CreatedAtUtc = now,
-                    FileName = upload.FileName, ResultKind = upload.ResultKind };
+                    FileName = upload.FileName, ResultKind = upload.ResultKind,
+                    HashVerificationMs=shaTicks*1000d/System.Diagnostics.Stopwatch.Frequency };
                 var temporary = Path.Combine(path, "metadata.tmp");
                 File.WriteAllText(temporary, JsonConvert.SerializeObject(metadata));
                 using (var file = new FileStream(temporary, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) file.Flush(true);
@@ -228,6 +232,8 @@ namespace Pilot.BimBridge.ServerExtension
                 // Same filesystem: publish data and metadata together. No result
                 // reader can observe half of the completed artifact.
                 Directory.Move(path, destination);
+                metadata.ArtifactPublicationMs=(System.Diagnostics.Stopwatch.GetTimestamp()-publicationStarted)*
+                    1000d/System.Diagnostics.Stopwatch.Frequency;
                 return metadata;
             }
             finally { gate.Release(); }

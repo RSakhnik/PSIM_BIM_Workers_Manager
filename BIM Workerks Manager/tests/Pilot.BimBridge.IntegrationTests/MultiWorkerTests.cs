@@ -119,6 +119,23 @@ namespace Pilot.BimBridge.IntegrationTests
             var other=Register("other");var second=(await Next(other)).Assignment;
             Assert.That(second.TaskId,Is.EqualTo(id));Assert.That(second.AssignmentId,Is.Not.EqualTo(first.AssignmentId));
             Assert.That(_runtime.StartTask(new StartTaskRequestDto {RegistrationId=old,TaskId=id,AssignmentId=first.AssignmentId}).IsSuccess,Is.False);
+            var status=_runtime.GetTaskStatus(id);
+            Assert.That(status.PriorAttempts,Has.Length.EqualTo(1));
+            Assert.That(status.PriorAttempts[0].AssignmentId,Is.EqualTo(first.AssignmentId));
+            Assert.That(status.PriorAttempts[0].WorkerInstanceId,Is.EqualTo("old"));
+            Assert.That(status.PriorAttempts[0].TaskError.Code,Is.EqualTo(BimBridgeErrorCodes.LeaseExpired));
+            Assert.That(status.AttemptQueueWaitMs,Is.GreaterThanOrEqualTo(0));
+            Assert.That(status.TaskAcceptanceWallMs,Is.GreaterThanOrEqualTo(0));
+            Assert.That(status.AssignmentWallMs,Is.GreaterThanOrEqualTo(0));
+            Assert.That(status.PriorAttempts[0].AssignmentWallMs,Is.GreaterThanOrEqualTo(0));
+            await Complete(other,"other",second);
+            _runtime.Dispose();
+            _runtime=new BimBridgeRuntime(_options,_clock,new FileSystemBimResultStore(_root),new SilentIntegrationLog(),false);
+            var recovered=_runtime.GetTaskStatus(id);
+            Assert.That(recovered.PriorAttempts,Has.Length.EqualTo(1));
+            Assert.That(recovered.PriorAttempts[0].AssignmentId,Is.EqualTo(first.AssignmentId));
+            Assert.That(recovered.TaskAcceptanceWallMs,Is.GreaterThanOrEqualTo(0));
+            Assert.That(recovered.AssignmentWallMs,Is.GreaterThanOrEqualTo(0));
         }
         [TestCase("identity")] [TestCase("utf-8")] public async Task PinnedSpatialShardRequeuesEvenWithLegacyRetryWhitelist(string encoding)
         {
@@ -130,6 +147,36 @@ namespace Pilot.BimBridge.IntegrationTests
             var first=(await Next(old)).Assignment;_clock.Advance(TimeSpan.FromSeconds(31));_runtime.RunLeaseCheck();
             var other=Register("other",ArtifactProtocol.ExportSpatial);var second=(await Next(other)).Assignment;
             Assert.That(second.TaskId,Is.EqualTo(id));Assert.That(second.AssignmentId,Is.Not.EqualTo(first.AssignmentId));
+        }
+        [Test] public async Task PreparedArtifactRetainsPreviousAssignmentAfterManagerRestart()
+        {
+            var old=Register("old");var id=Submit();var first=(await Next(old)).Assignment;
+            Assert.That(_runtime.StartTask(new StartTaskRequestDto {RegistrationId=old,TaskId=id,
+                AssignmentId=first.AssignmentId}).IsSuccess,Is.True);
+            var failed=_runtime.Fail(new FailTaskRequestDto {RegistrationId=old,TaskId=id,
+                AssignmentId=first.AssignmentId,
+                Error=new BimTaskErrorDto {Code="TRANSIENT",IsRetryable=true}});
+            Assert.That(failed.Requeued,Is.True);
+            var other=Register("other");var second=(await Next(other)).Assignment;
+            Assert.That(_runtime.StartTask(new StartTaskRequestDto {RegistrationId=other,TaskId=id,
+                AssignmentId=second.AssignmentId}).IsSuccess,Is.True);
+            var transfer=new ArtifactTransferRequestDto {TransferId=Guid.NewGuid(),
+                RegistrationId=other,WorkerInstanceId="other"};
+            Assert.That((await _runtime.ReserveArtifactAsync(new ReserveArtifactDto {Transfer=transfer,
+                TaskId=id,AssignmentId=second.AssignmentId},default)).IsSuccess,Is.True);
+            var data=new byte[]{1,2,3,4};string hash;
+            using(var sha=SHA256.Create())hash=BitConverter.ToString(sha.ComputeHash(data)).Replace("-","");
+            Assert.That((await _runtime.BeginOrResumeArtifactAsync(new BeginArtifactUploadDto {
+                TransferId=transfer.TransferId,WorkerInstanceId="other",
+                Descriptor=new BeginResultUploadRequestDto {RegistrationId=other,TaskId=id,
+                    AssignmentId=second.AssignmentId,TotalLength=4,TotalChunks=1,Sha256=hash}},default)).IsSuccess,Is.True);
+            _runtime.Dispose();
+            _runtime=new BimBridgeRuntime(_options,_clock,new FileSystemBimResultStore(_root),new SilentIntegrationLog(),false);
+            var recovered=_runtime.GetTaskStatus(id);
+            Assert.That(recovered.AttemptNumber,Is.EqualTo(2));
+            Assert.That(recovered.AssignmentId,Is.EqualTo(second.AssignmentId));
+            Assert.That(recovered.PriorAttempts,Has.Length.EqualTo(1));
+            Assert.That(recovered.PriorAttempts[0].TaskError.Code,Is.EqualTo("TRANSIENT"));
         }
         [Test] public async Task StaleReservedArtifactCannotStealNewAssignment()
         {

@@ -48,7 +48,10 @@ namespace Pilot.BimBridge.ServerExtension
                         OperationCode = upload.OperationCode, CreatedAtUtc = upload.TaskCreatedAtUtc,
                         State = metadata == null ? ArtifactProtocol.ResultPrepared : BimTaskStates.Completed,
                         CompletedAtUtc = metadata?.CreatedAtUtc, UploadId = metadata == null ? (Guid?)upload.UploadId : null,
-                        WorkerProcessingWallMs=upload.WorkerProcessingWallMs,ExecutionWorkerInstanceId=upload.WorkerInstanceId };
+                        PreparedAtUtc=upload.CreatedAtUtc,
+                        WorkerProcessingWallMs=upload.WorkerProcessingWallMs,ExecutionWorkerInstanceId=upload.WorkerInstanceId,
+                        SpatialPerformance=upload.SpatialPerformance,QueueWaitMs=upload.QueueWaitMs,
+                        HashVerificationMs=metadata?.HashVerificationMs,ArtifactPublicationMs=metadata?.ArtifactPublicationMs };
                     _clientRequests[upload.ClientRequestId] = upload.TaskId;
                     if (metadata == null) _uploads[upload.UploadId] = upload;
                 }
@@ -137,6 +140,7 @@ namespace Pilot.BimBridge.ServerExtension
 
         public BimTaskAcceptedDto Submit(SubmitBimTaskRequestDto request)
         {
+            var acceptedStarted=System.Diagnostics.Stopwatch.GetTimestamp();
             var now = _clock.UtcNow;
             if (request == null || request.ClientRequestId == Guid.Empty || string.IsNullOrWhiteSpace(request.OperationCode))
                 return ResponseErrors.Error<BimTaskAcceptedDto>(BimBridgeErrorCodes.InvalidRequest, "ClientRequestId and OperationCode are required.");
@@ -170,12 +174,15 @@ namespace Pilot.BimBridge.ServerExtension
                     MaxAttempts = request.MaxAttempts > 0 ? request.MaxAttempts : _options.Tasks.DefaultMaxAttempts,
                     ExpiresAtUtc = request.ExpiresAtUtc ?? now.AddMinutes(_options.Tasks.DefaultTaskTtlMinutes),
                     State = BimTaskStates.Queued,
-                    CreatedAtUtc = now
+                    CreatedAtUtc = now,
+                    QueuedAtTicks = System.Diagnostics.Stopwatch.GetTimestamp()
                 };
                 _tasks.Add(task.TaskId, task);
                 _clientRequests.Add(task.ClientRequestId, task.TaskId);
                 Interlocked.Increment(ref _submitted);
                 DispatchWaitersLocked();
+                task.TaskAcceptanceWallMs=(System.Diagnostics.Stopwatch.GetTimestamp()-acceptedStarted)*
+                    1000d/System.Diagnostics.Stopwatch.Frequency;
                 return Accepted(task);
             }
         }
@@ -316,13 +323,27 @@ namespace Pilot.BimBridge.ServerExtension
                     TaskId = task.TaskId,
                     State = task.State,
                     AttemptNumber = task.AttemptNumber,
+                    AssignmentId = task.AssignmentId,
                     CreatedAtUtc = task.CreatedAtUtc,
                     AssignedAtUtc = task.AssignedAtUtc,
                     StartedAtUtc = task.StartedAtUtc,
                     CompletedAtUtc = task.CompletedAtUtc,
+                    PreparedAtUtc = task.PreparedAtUtc,
                     TaskError = task.Error,
                     WorkerInstanceId=task.ExecutionWorkerInstanceId,
-                    ProcessingWallMs=task.WorkerProcessingWallMs
+                    ProcessingWallMs=task.WorkerProcessingWallMs,
+                    SpatialPerformance=task.SpatialPerformance,
+                    QueueWaitMs=task.QueueWaitMs,
+                    AttemptQueueWaitMs=task.AttemptQueueWaitMs,
+                    PriorAttempts=task.PriorAttempts.ToArray(),
+                    TaskAcceptanceWallMs=task.TaskAcceptanceWallMs,
+                    AssignmentWallMs=task.AssignmentWallMs,
+                    ResultPreparationWallMs=task.ResultPreparationWallMs,
+                    HashVerificationMs=task.HashVerificationMs,
+                    ArtifactPublicationMs=task.ArtifactPublicationMs,
+                    UploadWallMs=task.UploadWallMs,
+                    UploadRetryCount=task.UploadRetryCount,
+                    UploadRetryWaitMs=task.UploadRetryWaitMs
                 };
             }
         }
@@ -379,6 +400,7 @@ namespace Pilot.BimBridge.ServerExtension
                 ReleaseWorkerLocked(task);
                 if (retry)
                 {
+                    RecordPreviousAttempt(task,BimTaskStates.Failed,_clock.UtcNow);
                     ResetForRetryLocked(task);
                     Interlocked.Increment(ref _retried);
                 }
@@ -386,6 +408,7 @@ namespace Pilot.BimBridge.ServerExtension
                 {
                     task.State = BimTaskStates.Failed;
                     task.CompletedAtUtc = _clock.UtcNow;
+                    if(_results is FileSystemBimResultStore)TryPersistTelemetryState(task);
                     Interlocked.Increment(ref _failed);
                 }
                 DispatchWaitersLocked();
@@ -581,6 +604,7 @@ namespace Pilot.BimBridge.ServerExtension
                 if(task.State!=BimTaskStates.Completed)return ResponseErrors.Error<BimResultChunkDto>(BimBridgeErrorCodes.InvalidRequest,"Task has no readable completed artifact.");
             }
             Interlocked.Increment(ref _activeDownloads);
+            var serveStarted=System.Diagnostics.Stopwatch.GetTimestamp();
             try
             {
                 var metadata = await _results.GetMetadataAsync(taskId, cancellationToken).ConfigureAwait(false);
@@ -594,7 +618,9 @@ namespace Pilot.BimBridge.ServerExtension
                     TaskId = taskId,
                     ChunkIndex = chunkIndex,
                     Data = data,
-                    IsLast = chunkIndex == metadata.TotalChunks - 1
+                    IsLast = chunkIndex == metadata.TotalChunks - 1,
+                    ManagerServeWallMs=(System.Diagnostics.Stopwatch.GetTimestamp()-serveStarted)*
+                        1000d/System.Diagnostics.Stopwatch.Frequency
                 };
             }
             catch (ResultStoreException exception)
@@ -826,6 +852,7 @@ namespace Pilot.BimBridge.ServerExtension
             if (worker.IsStale || worker.CurrentTaskId.HasValue ||
                 (worker.State != BimWorkerStates.Waiting && worker.State != BimWorkerStates.Ready))
                 return null;
+            var assignmentStarted=System.Diagnostics.Stopwatch.GetTimestamp();
             var now = _clock.UtcNow;
             var task = _tasks.Values
                 .Where(candidate => candidate.State == BimTaskStates.Queued &&
@@ -839,11 +866,19 @@ namespace Pilot.BimBridge.ServerExtension
             if (task == null) return null;
 
             task.State = BimTaskStates.Assigned;
+            if(task.QueuedAtTicks!=0)
+            {
+                var elapsed=System.Diagnostics.Stopwatch.GetTimestamp()-task.QueuedAtTicks;
+                task.AttemptQueueWaitMs=elapsed*1000d/System.Diagnostics.Stopwatch.Frequency;
+                task.QueueWaitMs=(task.QueueWaitMs??0)+task.AttemptQueueWaitMs.Value;
+                task.QueuedAtTicks=0;
+            }
             task.ExecutionWorkerInstanceId=worker.WorkerInstanceId;
             task.PreparedAtUtc=null;
             _assignmentsByWorker.TryGetValue(worker.WorkerInstanceId,out var assignments);
             _assignmentsByWorker[worker.WorkerInstanceId]=assignments+1;
             task.AttemptNumber++;
+            task.Error=null;
             task.RegistrationId = worker.RegistrationId;
             task.AssignmentId = Guid.NewGuid();
             task.AssignedAtUtc = now;
@@ -851,6 +886,8 @@ namespace Pilot.BimBridge.ServerExtension
             task.LeaseExpiresAtUtc = now.AddSeconds(_options.Tasks.StartTaskTimeoutSeconds);
             worker.CurrentTaskId = task.TaskId;
             worker.State = BimWorkerStates.Busy;
+            task.AssignmentWallMs=(System.Diagnostics.Stopwatch.GetTimestamp()-assignmentStarted)*
+                1000d/System.Diagnostics.Stopwatch.Frequency;
             return new BimTaskAssignmentDto
             {
                 TaskId = task.TaskId,
@@ -941,6 +978,7 @@ namespace Pilot.BimBridge.ServerExtension
                 task.Error = new BimTaskErrorDto { Code = BimBridgeErrorCodes.LeaseExpired, Message = reason, IsRetryable = true };
                 if (CanRetryLocked(task))
                 {
+                    RecordPreviousAttempt(task,BimTaskStates.Abandoned,_clock.UtcNow);
                     ResetForRetryLocked(task);
                     Interlocked.Increment(ref _retried);
                 }
@@ -948,6 +986,7 @@ namespace Pilot.BimBridge.ServerExtension
                 {
                     task.State = BimTaskStates.Failed;
                     task.CompletedAtUtc = _clock.UtcNow;
+                    if(_results is FileSystemBimResultStore)TryPersistTelemetryState(task);
                     Interlocked.Increment(ref _failed);
                 }
             }
@@ -982,12 +1021,43 @@ namespace Pilot.BimBridge.ServerExtension
         private static void ResetForRetryLocked(TaskRecord task)
         {
             task.State = BimTaskStates.Queued;
+            task.QueuedAtTicks=System.Diagnostics.Stopwatch.GetTimestamp();
+            task.AttemptQueueWaitMs=null;
+            task.AssignmentWallMs=null;
+            task.ResultPreparationWallMs=null;
+            task.UploadRetryCount=null;
+            task.UploadRetryWaitMs=null;
+            task.ExecutionWorkerInstanceId=null;
+            task.WorkerProcessingWallMs=null;
+            task.SpatialPerformance=null;
             task.RegistrationId = null;
             task.AssignmentId = null;
             task.LeaseExpiresAtUtc = null;
             task.AssignedAtUtc = null;
             task.StartedAtUtc = null;
             task.UploadId = null;
+        }
+
+        private static void RecordPreviousAttempt(TaskRecord task,string state,DateTime endedAtUtc)
+        {
+            if(!task.AssignmentId.HasValue)return;
+            task.PriorAttempts.Add(new TaskAttemptTelemetryDto {
+                AttemptNumber=task.AttemptNumber,AssignmentId=task.AssignmentId.Value,
+                WorkerInstanceId=task.ExecutionWorkerInstanceId,AssignedAtUtc=task.AssignedAtUtc,
+                StartedAtUtc=task.StartedAtUtc,EndedAtUtc=endedAtUtc,QueueWaitMs=task.AttemptQueueWaitMs,
+                AssignmentWallMs=task.AssignmentWallMs,
+                ResultPreparationWallMs=task.ResultPreparationWallMs,
+                UploadRetryCount=task.UploadRetryCount,UploadRetryWaitMs=task.UploadRetryWaitMs,
+                TaskError=task.Error,State=state,ProcessingWallMs=task.WorkerProcessingWallMs,
+                SpatialPerformance=task.SpatialPerformance
+            });
+        }
+
+        private void TryPersistTelemetryState(TaskRecord task)
+        {
+            if(!(_results is FileSystemBimResultStore store))return;
+            try { store.SaveTaskState(task); }
+            catch(Exception error) { _log.Warning("Task telemetry checkpoint failed for " + task.TaskId + ": " + error.Message); }
         }
 
         private void ReleaseWorkerLocked(TaskRecord task)

@@ -69,7 +69,8 @@ namespace AdvancedTools.BimBridge
     {
         private readonly IModelStorage _storage;
         public FakeSdkAdapter(IModelStorage storage) {_storage=storage;}
-        public Task<T> ReadAsync<T>(Func<IModelStorage,T> read,CancellationToken token) {token.ThrowIfCancellationRequested();return Task.FromResult(read(_storage));}
+        public Task<T> ReadAsync<T>(Func<IModelStorage,T> read,CancellationToken token,Action<long> dispatchWait=null)
+        {token.ThrowIfCancellationRequested();dispatchWait?.Invoke(0);return Task.FromResult(read(_storage));}
         public Task ReleaseOwnedAsync(IDisposable value) {value.Dispose();return Task.CompletedTask;}
     }
     public class ModelContextProvider

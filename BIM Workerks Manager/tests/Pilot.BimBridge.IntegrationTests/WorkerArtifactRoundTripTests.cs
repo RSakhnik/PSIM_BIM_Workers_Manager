@@ -68,9 +68,15 @@ namespace Pilot.BimBridge.IntegrationTests
                     using var spool=new DurableArtifactSpool(settings,"worker",null);
                     var artifact=spool.Prepare(new PreparedResult {Path=source,Length=bytes.Length,Sha256=hash,ContentType="application/octet-stream"},wait.Assignment,4);
                     var client=new FaultClient(runtime);
-                    await new ResumableArtifactUploader(client,settings,null).UploadAsync(artifact,registration,CancellationToken.None);
+                    await new ResumableArtifactUploader(client,settings,null,null,spool.RecordRetry)
+                        .UploadAsync(artifact,registration,CancellationToken.None);
                     Assert.That(client.BeginCalls,Is.EqualTo(2));
                     Assert.That(client.DuplicateChunkAcks,Is.EqualTo(1));
+                    Assert.That(artifact.UploadRetryCount,Is.EqualTo(2));
+                    Assert.That(artifact.UploadRetryWaitMs,Is.GreaterThan(0));
+                    var status=runtime.GetTaskStatus(accepted.TaskId);
+                    Assert.That(status.UploadRetryCount,Is.EqualTo(2));
+                    Assert.That(status.UploadRetryWaitMs,Is.GreaterThan(0));
                     Assert.That(client.Peak,Is.InRange(2,3));
                     Assert.That(spool.Pending().Length,Is.EqualTo(1)); // uploader cannot delete before caller observes completion
                     var metadata=await runtime.GetResultMetadataAsync(accepted.TaskId,CancellationToken.None);

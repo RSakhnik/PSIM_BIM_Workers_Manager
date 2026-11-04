@@ -34,6 +34,7 @@ namespace AdvancedTools.BimBridge
         public string ContentEncoding {get;set;}
         public string FileName {get;set;}
         public string ResultKind {get;set;}
+        public SpatialTaskPerformanceDto SpatialPerformance {get;set;}
         public bool DeleteOnDispose {get;set;}
         public void Dispose() {if(DeleteOnDispose)File.Delete(Path);}
     }

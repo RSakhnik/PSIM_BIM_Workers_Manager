@@ -11,6 +11,26 @@ namespace Pilot.BimBridge.ServerExtension
     internal sealed partial class BimBridgeRuntime
     {
         private readonly SemaphoreSlim _artifactBeginGate = new SemaphoreSlim(1, 1);
+        private static bool ValidDuration(double value)=>!double.IsNaN(value)&&!double.IsInfinity(value)&&value>=0;
+        private static bool ValidDuration(double? value)=>!value.HasValue||ValidDuration(value.Value);
+        private static bool ValidCount(long? value)=>!value.HasValue||value.Value>=0;
+        private static bool ValidSpatialPerformance(SpatialTaskPerformanceDto profile,BeginResultUploadRequestDto descriptor)
+        {
+            return profile.SchemaVersion==1 && profile.TaskId==descriptor.TaskId &&
+                profile.AssignmentId==descriptor.AssignmentId && profile.AttemptNumber>=1 &&
+                profile.SourceElements>=0 && profile.TraversedNodes>=0 && profile.Instances>=0 &&
+                profile.UniqueMeshes>=0 && ValidCount(profile.MeshCacheHits) && ValidCount(profile.MeshCacheMisses) &&
+                ValidCount(profile.SnapshotIndexHits) && ValidCount(profile.SnapshotIndexMisses) &&
+                ValidCount(profile.WorkerMeshCacheEntries) && ValidCount(profile.WorkerMeshCacheBytes) &&
+                ValidCount(profile.WorkerMeshCacheEvictions) && ValidCount(profile.WorkerSnapshotIndexEntries) &&
+                ValidCount(profile.WorkerSnapshotIndexBytes) && ValidCount(profile.WorkerSnapshotIndexEvictions) &&
+                ValidDuration(profile.SdkTraversalReadMs) && ValidDuration(profile.SdkMeshAcquireMs) &&
+                ValidDuration(profile.SdkVerticesReadMs) && ValidDuration(profile.BoundsCpuMs) &&
+                ValidDuration(profile.BinaryEncodingActiveMs) && ValidDuration(profile.ArtifactWriteWallMs) &&
+                ValidDuration(profile.ArtifactFinalizeWallMs) && ValidDuration(profile.ModelAccessWallMs) &&
+                ValidDuration(profile.SnapshotIndexWallMs) && ValidDuration(profile.SdkDispatchWaitWallMs) &&
+                ValidDuration(profile.SpoolPreparationWallMs);
+        }
         private FileSystemBimResultStore ArtifactStore => _results as FileSystemBimResultStore
             ?? throw new InvalidOperationException("Resumable artifacts require a durable result store.");
 
@@ -70,6 +90,7 @@ namespace Pilot.BimBridge.ServerExtension
         {
             if (request?.Descriptor == null || request.TransferId == Guid.Empty)
                 return ResponseErrors.Error<ArtifactUploadStatusDto>("INVALID_REQUEST", "Transfer descriptor is required.");
+            var preparationStarted=System.Diagnostics.Stopwatch.GetTimestamp();
             var identity = new ArtifactTransferRequestDto { TransferId = request.TransferId,
                 WorkerInstanceId = request.WorkerInstanceId, RegistrationId = request.Descriptor.RegistrationId };
             await _artifactBeginGate.WaitAsync(token).ConfigureAwait(false);
@@ -84,6 +105,12 @@ namespace Pilot.BimBridge.ServerExtension
                     double.IsInfinity(request.WorkerProcessingWallMs.Value)||request.WorkerProcessingWallMs.Value<0))
                     return ResponseErrors.Error<ArtifactUploadStatusDto>("INVALID_REQUEST","Processing duration must be finite and nonnegative.");
                 var descriptor = request.Descriptor;
+                var performance=request.SpatialPerformance;
+                if(performance!=null && !ValidSpatialPerformance(performance,descriptor))
+                {
+                    _log.Warning("Invalid spatial performance profile ignored for task " + descriptor.TaskId);
+                    performance=null;
+                }
                 if (descriptor.TotalLength > _options.Results.MaxArtifactBytes)
                     return ResponseErrors.Error<ArtifactUploadStatusDto>("RESULT_TOO_LARGE", "Artifact exceeds the configured byte limit.");
                 if (descriptor.TotalLength < 0 ||
@@ -142,6 +169,8 @@ namespace Pilot.BimBridge.ServerExtension
                         AssignmentId = descriptor.AssignmentId, RegistrationId = descriptor.RegistrationId,
                         WorkerInstanceId = request.WorkerInstanceId, TotalLength = descriptor.TotalLength,
                         WorkerProcessingWallMs=previous?.WorkerProcessingWallMs??request.WorkerProcessingWallMs,
+                        SpatialPerformance=previous?.SpatialPerformance??performance,
+                        QueueWaitMs=previous?.QueueWaitMs??task?.QueueWaitMs,
                         TotalChunks = descriptor.TotalChunks, ChunkSizeBytes = previous?.ChunkSizeBytes ?? _options.Results.ChunkSizeBytes,
                         Sha256 = descriptor.Sha256, ContentType = descriptor.ContentType, ContentEncoding = descriptor.ContentEncoding,
                         FileName = descriptor.FileName, ResultKind = descriptor.ResultKind,
@@ -153,6 +182,8 @@ namespace Pilot.BimBridge.ServerExtension
                     {
                         task.PreparedAtUtc=_clock.UtcNow;
                         task.WorkerProcessingWallMs=upload.WorkerProcessingWallMs;
+                        task.SpatialPerformance=upload.SpatialPerformance;
+                        task.QueueWaitMs=upload.QueueWaitMs;
                         task.State = ArtifactProtocol.ResultPrepared;
                         task.UploadId = upload.UploadId;
                         _uploads[upload.UploadId] = upload;
@@ -173,6 +204,18 @@ namespace Pilot.BimBridge.ServerExtension
                     }
                     throw;
                 }
+                if(previous==null)
+                {
+                    lock(_gate)
+                    {
+                        if(_tasks.TryGetValue(upload.TaskId,out var preparedTask))
+                        {
+                            preparedTask.ResultPreparationWallMs=
+                                (System.Diagnostics.Stopwatch.GetTimestamp()-preparationStarted)*1000d/System.Diagnostics.Stopwatch.Frequency;
+                            TryPersistTelemetryState(preparedTask);
+                        }
+                    }
+                }
                 upload = await OwnedTransferAsync(identity, token).ConfigureAwait(false);
                 lock (_gate)
                 {
@@ -181,7 +224,10 @@ namespace Pilot.BimBridge.ServerExtension
                         _tasks[upload.TaskId] = new TaskRecord { TaskId = upload.TaskId, ClientRequestId = upload.ClientRequestId,
                             OperationCode = upload.OperationCode, CreatedAtUtc = upload.TaskCreatedAtUtc,
                             State = ArtifactProtocol.ResultPrepared, UploadId = upload.UploadId,
-                            ExecutionWorkerInstanceId=upload.WorkerInstanceId,WorkerProcessingWallMs=upload.WorkerProcessingWallMs };
+                            PreparedAtUtc=upload.CreatedAtUtc,
+                            ExecutionWorkerInstanceId=upload.WorkerInstanceId,WorkerProcessingWallMs=upload.WorkerProcessingWallMs,
+                            SpatialPerformance=upload.SpatialPerformance };
+                        _tasks[upload.TaskId].QueueWaitMs=upload.QueueWaitMs;
                         _clientRequests[upload.ClientRequestId] = upload.TaskId;
                     }
                     if (_tasks[upload.TaskId].State != BimTaskStates.Completed) _uploads[upload.UploadId] = upload;
@@ -237,6 +283,16 @@ namespace Pilot.BimBridge.ServerExtension
                         _tasks[task.TaskId] = task; _clientRequests[task.ClientRequestId] = task.TaskId;
                     }
                     task.WorkerProcessingWallMs=upload.WorkerProcessingWallMs;
+                    task.SpatialPerformance=upload.SpatialPerformance;
+                    task.QueueWaitMs=upload.QueueWaitMs;
+                    task.HashVerificationMs=metadata.HashVerificationMs;
+                    if(metadata.ArtifactPublicationMs.HasValue)task.ArtifactPublicationMs=metadata.ArtifactPublicationMs;
+                    if(!task.UploadWallMs.HasValue && request.UploadWallMs.HasValue && ValidDuration(request.UploadWallMs.Value))
+                        task.UploadWallMs=request.UploadWallMs;
+                    if(!task.UploadRetryCount.HasValue && ValidCount(request.UploadRetryCount))
+                        task.UploadRetryCount=request.UploadRetryCount;
+                    if(!task.UploadRetryWaitMs.HasValue && ValidDuration(request.UploadRetryWaitMs))
+                        task.UploadRetryWaitMs=request.UploadRetryWaitMs;
                     task.ExecutionWorkerInstanceId=upload.WorkerInstanceId;
                     cancelled=task.State==BimTaskStates.Cancelled||task.State==BimTaskStates.CancelRequested;
                     if(!cancelled)

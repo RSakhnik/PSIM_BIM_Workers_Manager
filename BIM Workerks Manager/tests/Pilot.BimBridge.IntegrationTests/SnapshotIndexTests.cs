@@ -13,18 +13,23 @@ namespace Pilot.BimBridge.IntegrationTests
         [Test]public async Task SelectionAndSpatialExistenceShareOneSnapshotScan()
         {
             var provider=new ModelContextProvider();var cache=new SnapshotElementIndexCache(1024*1024,2);
+            var performance=new SpatialPerformanceMetrics(true);
             using(var model=await provider.GetModelAsync(null,null,CancellationToken.None))
             {
                 var selected=new List<ElementKey>();
-                await new BulkSelectionReader(provider,new BimBridgeSettings(),cache).VisitAsync(model,
+                await new BulkSelectionReader(provider,new BimBridgeSettings(),cache,performance).VisitAsync(model,
                     new BulkSelectionRequest{ModelPartIds=new List<Guid>{provider.Parts[0]}},
                     key=>{selected.Add(key);return Task.CompletedTask;},CancellationToken.None);
                 Assert.That(selected.Count,Is.EqualTo(5));Assert.That(provider.Enumerated,Is.EqualTo(5));
-                var source=new SpatialSdkSource(model,false,false,false,cache);
+                var source=new SpatialSdkSource(model,false,false,false,cache,performance:performance);
                 Assert.That(await source.ExistsAsync(selected[0],CancellationToken.None),Is.True);
                 Assert.That(await source.ExistsAsync(new ElementKey{ModelPartId=provider.Parts[0],ElementId=Guid.NewGuid()},CancellationToken.None),Is.False);
                 Assert.That(provider.Enumerated,Is.EqualTo(5));Assert.That(cache.Builds,Is.EqualTo(1));
                 Assert.That(cache.Hits,Is.EqualTo(1));Assert.That(cache.Bytes,Is.GreaterThan(0));
+                var snapshot=performance.Snapshot(Guid.NewGuid(),Guid.NewGuid(),1);
+                Assert.That(snapshot.SnapshotIndexWallMs,Is.GreaterThanOrEqualTo(0));
+                Assert.That(snapshot.SnapshotIndexHits,Is.EqualTo(1));
+                Assert.That(snapshot.SnapshotIndexMisses,Is.EqualTo(1));
             }
         }
         [Test]public async Task CacheIsVersionScopedAndEvictsLeastRecentlyUsedPart()
@@ -38,8 +43,10 @@ namespace Pilot.BimBridge.IntegrationTests
                 Assert.That(await cache.GetAsync(first,provider.Parts[0],CancellationToken.None),Is.SameAs(a));
                 await cache.GetAsync(second,provider.Parts[0],CancellationToken.None);
                 Assert.That(cache.Entries,Is.EqualTo(1));Assert.That(cache.Builds,Is.EqualTo(2));
+                Assert.That(cache.Evictions,Is.EqualTo(1));
                 await cache.GetAsync(first,provider.Parts[0],CancellationToken.None);
                 Assert.That(cache.Builds,Is.EqualTo(3));Assert.That(cache.Hits,Is.EqualTo(1));
+                Assert.That(cache.Evictions,Is.EqualTo(2));
                 Assert.That(provider.Enumerated,Is.EqualTo(15));
             }
         }

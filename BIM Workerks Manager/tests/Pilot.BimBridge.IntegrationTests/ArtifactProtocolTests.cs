@@ -46,20 +46,86 @@ namespace Pilot.BimBridge.IntegrationTests
         [Test] public async Task ProcessingDurationExcludesUploaderQueueRetryAndManagerClockTimeAndSurvivesRestart()
         {
             _begin.WorkerProcessingWallMs=12.5;
+            _begin.SpatialPerformance=new SpatialTaskPerformanceDto {TaskId=_begin.Descriptor.TaskId,
+                AssignmentId=_begin.Descriptor.AssignmentId,AttemptNumber=1,SourceElements=3,TraversedNodes=8,
+                SdkTraversalReadMs=4.25,SdkVerticesReadMs=2.5,BoundsCpuMs=1.75,
+                BinaryEncodingActiveMs=1.25,ArtifactWriteWallMs=3.5,ArtifactFinalizeWallMs=0.75,
+                SdkDispatchWaitWallMs=9.5,SpoolPreparationWallMs=1.75,
+                WorkerMeshCacheEntries=3,WorkerMeshCacheBytes=512,WorkerMeshCacheEvictions=2,
+                WorkerSnapshotIndexEntries=1,WorkerSnapshotIndexBytes=256,WorkerSnapshotIndexEvictions=4};
             Assert.That((await _runtime.BeginOrResumeArtifactAsync(_begin,Token)).IsSuccess,Is.True);
+            var preparationMs=_runtime.GetTaskStatus(_begin.Descriptor.TaskId).ResultPreparationWallMs;
+            Assert.That(preparationMs,Is.GreaterThanOrEqualTo(0));
+            var duplicate=await _runtime.BeginOrResumeArtifactAsync(_begin,Token);
+            Assert.That(duplicate.IsSuccess,Is.True,duplicate.Error?.Code+": "+duplicate.Error?.Message);
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).ResultPreparationWallMs,Is.EqualTo(preparationMs));
             _clock.Advance(TimeSpan.FromMinutes(5));_runtime.RunLeaseCheck();_registration=Register();
             await Chunk(0,new byte[]{1,2,3,4});await Chunk(1,new byte[]{5,6});
-            Assert.That((await _runtime.CompleteArtifactAsync(Identity(),Token)).IsSuccess,Is.True);
+            var completion=Identity();completion.UploadWallMs=7.25;
+            completion.UploadRetryCount=2;completion.UploadRetryWaitMs=3.5;
+            Assert.That((await _runtime.CompleteArtifactAsync(completion,Token)).IsSuccess,Is.True);
             Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).ProcessingWallMs,Is.EqualTo(12.5));
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).SpatialPerformance.TraversedNodes,Is.EqualTo(8));
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).PreparedAtUtc,Is.Not.Null);
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).QueueWaitMs,Is.GreaterThanOrEqualTo(0));
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).HashVerificationMs,Is.GreaterThanOrEqualTo(0));
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).ArtifactPublicationMs,Is.GreaterThanOrEqualTo(0));
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).UploadWallMs,Is.EqualTo(7.25));
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).UploadRetryCount,Is.EqualTo(2));
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).UploadRetryWaitMs,Is.EqualTo(3.5));
             Assert.That(_runtime.GetStatistics().AverageProcessingWallMsByWorker["stable-worker"],Is.EqualTo(12.5));
             _runtime.Dispose();_runtime=Runtime();
             Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).ProcessingWallMs,Is.EqualTo(12.5));
             Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).WorkerInstanceId,Is.EqualTo("stable-worker"));
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).SpatialPerformance.SdkVerticesReadMs,Is.EqualTo(2.5));
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).PreparedAtUtc,Is.Not.Null);
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).ResultPreparationWallMs,Is.EqualTo(preparationMs));
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).SpatialPerformance.BinaryEncodingActiveMs,Is.EqualTo(1.25));
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).SpatialPerformance.ArtifactFinalizeWallMs,Is.EqualTo(0.75));
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).SpatialPerformance.SdkDispatchWaitWallMs,Is.EqualTo(9.5));
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).SpatialPerformance.SpoolPreparationWallMs,Is.EqualTo(1.75));
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).SpatialPerformance.WorkerMeshCacheBytes,Is.EqualTo(512));
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).SpatialPerformance.WorkerSnapshotIndexEvictions,Is.EqualTo(4));
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).QueueWaitMs,Is.GreaterThanOrEqualTo(0));
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).HashVerificationMs,Is.GreaterThanOrEqualTo(0));
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).ArtifactPublicationMs,Is.GreaterThanOrEqualTo(0));
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).UploadWallMs,Is.EqualTo(7.25));
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).UploadRetryCount,Is.EqualTo(2));
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).UploadRetryWaitMs,Is.EqualTo(3.5));
         }
         [Test] public async Task UnreportedProcessingDurationRemainsUnavailable()
         {
             Assert.That((await _runtime.BeginOrResumeArtifactAsync(_begin,Token)).IsSuccess,Is.True);
             Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).ProcessingWallMs,Is.Null);
+        }
+        [Test] public async Task InvalidTelemetryDoesNotBlockArtifact()
+        {
+            _begin.SpatialPerformance=new SpatialTaskPerformanceDto {TaskId=_begin.Descriptor.TaskId,
+                AssignmentId=_begin.Descriptor.AssignmentId,AttemptNumber=1,
+                BinaryEncodingActiveMs=double.NaN};
+            Assert.That((await _runtime.BeginOrResumeArtifactAsync(_begin,Token)).IsSuccess,Is.True);
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).SpatialPerformance,Is.Null);
+        }
+        [TestCase(double.NaN,0)]
+        [TestCase(1.0,-1)]
+        public async Task InvalidSnapshotIndexTelemetryDoesNotBlockArtifact(double wallMs,long hits)
+        {
+            _begin.SpatialPerformance=new SpatialTaskPerformanceDto {TaskId=_begin.Descriptor.TaskId,
+                AssignmentId=_begin.Descriptor.AssignmentId,AttemptNumber=1,
+                SnapshotIndexWallMs=wallMs,SnapshotIndexHits=hits};
+            Assert.That((await _runtime.BeginOrResumeArtifactAsync(_begin,Token)).IsSuccess,Is.True);
+            Assert.That(_runtime.GetTaskStatus(_begin.Descriptor.TaskId).SpatialPerformance,Is.Null);
+        }
+        [Test] public async Task InvalidUploadRetryTelemetryDoesNotBlockCompletion()
+        {
+            Assert.That((await _runtime.BeginOrResumeArtifactAsync(_begin,Token)).IsSuccess,Is.True);
+            await Chunk(0,new byte[]{1,2,3,4});await Chunk(1,new byte[]{5,6});
+            var completion=Identity();completion.UploadRetryCount=-1;
+            completion.UploadRetryWaitMs=double.NaN;
+            Assert.That((await _runtime.CompleteArtifactAsync(completion,Token)).IsSuccess,Is.True);
+            var status=_runtime.GetTaskStatus(_begin.Descriptor.TaskId);
+            Assert.That(status.UploadRetryCount,Is.Null);
+            Assert.That(status.UploadRetryWaitMs,Is.Null);
         }
         [Test] public async Task LostAcksReconnectAndLeaseExpiryNeverRepeatExtraction()
         {

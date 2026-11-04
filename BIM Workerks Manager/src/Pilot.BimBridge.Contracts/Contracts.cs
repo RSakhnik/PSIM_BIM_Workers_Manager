@@ -482,6 +482,40 @@ namespace Pilot.BimBridge.Contracts
         public BimTaskErrorDto TaskError { get; set; }
         [ProtoMember(9)] public string WorkerInstanceId {get;set;}
         [ProtoMember(10)] public double? ProcessingWallMs {get;set;}
+        [ProtoMember(11)] public SpatialTaskPerformanceDto SpatialPerformance {get;set;}
+        [ProtoMember(12)] public double? QueueWaitMs {get;set;}
+        [ProtoMember(13)] public double? HashVerificationMs {get;set;}
+        [ProtoMember(14)] public double? UploadWallMs {get;set;}
+        [ProtoMember(15)] public double? ArtifactPublicationMs {get;set;}
+        [ProtoMember(16)] public DateTime? PreparedAtUtc {get;set;}
+        [ProtoMember(17)] public TaskAttemptTelemetryDto[] PriorAttempts {get;set;}
+        [ProtoMember(18)] public double? AttemptQueueWaitMs {get;set;}
+        [ProtoMember(19)] public Guid? AssignmentId {get;set;}
+        [ProtoMember(20)] public double? TaskAcceptanceWallMs {get;set;}
+        [ProtoMember(21)] public double? AssignmentWallMs {get;set;}
+        [ProtoMember(22)] public double? ResultPreparationWallMs {get;set;}
+        [ProtoMember(23)] public int? UploadRetryCount {get;set;}
+        [ProtoMember(24)] public double? UploadRetryWaitMs {get;set;}
+    }
+
+    [ProtoContract]
+    public sealed class TaskAttemptTelemetryDto
+    {
+        [ProtoMember(1)] public int AttemptNumber {get;set;}
+        [ProtoMember(2)] public Guid AssignmentId {get;set;}
+        [ProtoMember(3)] public string WorkerInstanceId {get;set;}
+        [ProtoMember(4)] public DateTime? AssignedAtUtc {get;set;}
+        [ProtoMember(5)] public DateTime? StartedAtUtc {get;set;}
+        [ProtoMember(6)] public DateTime EndedAtUtc {get;set;}
+        [ProtoMember(7)] public double? QueueWaitMs {get;set;}
+        [ProtoMember(8)] public BimTaskErrorDto TaskError {get;set;}
+        [ProtoMember(9)] public string State {get;set;}
+        [ProtoMember(10)] public double? ProcessingWallMs {get;set;}
+        [ProtoMember(11)] public SpatialTaskPerformanceDto SpatialPerformance {get;set;}
+        [ProtoMember(12)] public double? AssignmentWallMs {get;set;}
+        [ProtoMember(13)] public double? ResultPreparationWallMs {get;set;}
+        [ProtoMember(14)] public int? UploadRetryCount {get;set;}
+        [ProtoMember(15)] public double? UploadRetryWaitMs {get;set;}
     }
 
     [ProtoContract]
@@ -522,6 +556,7 @@ namespace Pilot.BimBridge.Contracts
         public byte[] Data { get; set; }
         [ProtoMember(4)]
         public bool IsLast { get; set; }
+        [ProtoMember(5)] public double? ManagerServeWallMs { get; set; }
     }
 
     [ProtoContract]

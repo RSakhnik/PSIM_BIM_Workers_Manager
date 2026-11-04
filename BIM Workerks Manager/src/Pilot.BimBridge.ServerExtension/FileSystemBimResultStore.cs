@@ -23,6 +23,8 @@ namespace Pilot.BimBridge.ServerExtension
         public DateTime CreatedAtUtc { get; set; }
         public string FileName { get; set; }
         public string ResultKind { get; set; }
+        public double? HashVerificationMs { get; set; }
+        public double? ArtifactPublicationMs { get; set; }
     }
 
     internal sealed class ResultStoreException : Exception

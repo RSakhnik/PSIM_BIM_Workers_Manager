@@ -103,9 +103,10 @@ namespace Pilot.BimBridge.IntegrationTests
             var geo=new MeshGeometryCache.Geometry{Vertices=new System.Collections.Generic.List<double[]>{new double[9]}};
             cache.Put(one,geo);Assert.That(cache.Find(one,false,false,false),Is.Not.Null);
             cache.Put(two,geo);Assert.That(cache.Entries,Is.EqualTo(1));Assert.That(cache.Find(one,false,false,false),Is.Null);
+            Assert.That(cache.Evictions,Is.EqualTo(1));
             Assert.That(cache.Bytes,Is.LessThanOrEqualTo(1024));
             cache.Put(one,new MeshGeometryCache.Geometry{Vertices=new System.Collections.Generic.List<double[]>{new double[1000]}});
-            Assert.That(cache.Entries,Is.EqualTo(1));
+            Assert.That(cache.Entries,Is.EqualTo(1));Assert.That(cache.Evictions,Is.EqualTo(1));
         }
     }
 }

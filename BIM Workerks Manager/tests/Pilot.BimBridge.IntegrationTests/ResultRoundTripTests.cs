@@ -92,6 +92,8 @@ namespace Pilot.BimBridge.IntegrationTests
                 Assert.That(completed.State, Is.EqualTo(BimTaskStates.Completed));
                 Assert.That(first.Data, Is.EqualTo(new byte[] { 1, 2, 3, 4 }));
                 Assert.That(second.Data, Is.EqualTo(new byte[] { 5, 6 }));
+                Assert.That(first.ManagerServeWallMs, Is.GreaterThanOrEqualTo(0));
+                Assert.That(second.ManagerServeWallMs, Is.GreaterThanOrEqualTo(0));
             }
             Directory.Delete(directory, true);
         }

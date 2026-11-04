@@ -26,11 +26,14 @@ namespace Pilot.BimBridge.IntegrationTests
             if(!path.StartsWith(Path.GetFullPath(Path.Combine(Path.GetTempPath(),"worker-pipeline"))+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))throw new Exception("Unsafe cleanup");
             Directory.Delete(path,true);
         }
-        private DurableArtifact Prepare(int length=10,double? duration=null)
+        private DurableArtifact Prepare(int length=10,double? duration=null,bool telemetry=false)
         {
             var path=Path.Combine(_root,Guid.NewGuid()+".input");File.WriteAllBytes(path,new byte[length]);
-            return _spool.Prepare(new PreparedResult {Path=path,Length=length,Sha256=new string('0',64)},
-                new BimTaskAssignmentDto {TaskId=Guid.NewGuid(),AssignmentId=Guid.NewGuid()},4,null,duration);
+            var assignment=new BimTaskAssignmentDto {TaskId=Guid.NewGuid(),AssignmentId=Guid.NewGuid()};
+            var result=new PreparedResult {Path=path,Length=length,Sha256=new string('0',64),
+                SpatialPerformance=telemetry?new SpatialTaskPerformanceDto {TaskId=assignment.TaskId,
+                    AssignmentId=assignment.AssignmentId,AttemptNumber=1}:null};
+            return _spool.Prepare(result,assignment,4,null,duration);
         }
         private static TaskCompletionSource<bool> Signal()=>new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         [Test] public async Task NextSdkStartsWhilePreviousArtifactUploadIsStillRunning()
@@ -127,6 +130,25 @@ namespace Pilot.BimBridge.IntegrationTests
             var pipeline=new PreparedArtifactPipeline(_spool,_settings,(a,t)=>Task.CompletedTask,e=>{});
             Assert.That(pipeline.CanAccept,Is.False,"100 retained + 100 reserved exceeds 150 byte cap");
             Assert.That(File.Exists(artifact.Path),Is.True);
+        }
+        [Test] public void SpoolPreparationTimeSurvivesWorkerRestart()
+        {
+            var artifact=Prepare(10,telemetry:true);
+            Assert.That(artifact.SpatialPerformance.SpoolPreparationWallMs,Is.GreaterThanOrEqualTo(0));
+            _spool.Dispose();_spool=new DurableArtifactSpool(_settings,"machine:user:durable-1",null);
+            var restored=_spool.Pending().Single();
+            Assert.That(restored.TransferId,Is.EqualTo(artifact.TransferId));
+            Assert.That(restored.SpatialPerformance.SpoolPreparationWallMs,
+                Is.EqualTo(artifact.SpatialPerformance.SpoolPreparationWallMs));
+        }
+        [Test] public void RetryTelemetrySurvivesWorkerRestart()
+        {
+            var artifact=Prepare();
+            _spool.RecordRetry(artifact,125);
+            _spool.Dispose();_spool=new DurableArtifactSpool(_settings,"machine:user:durable-1",null);
+            var restored=_spool.Pending().Single();
+            Assert.That(restored.UploadRetryCount,Is.EqualTo(1));
+            Assert.That(restored.UploadRetryWaitMs,Is.EqualTo(125));
         }
     }
 }
