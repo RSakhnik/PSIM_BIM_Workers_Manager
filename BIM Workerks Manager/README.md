@@ -29,6 +29,16 @@ stdio процесс без сетевого listener. Он не подключ�
 - `Pilot.BimBridge.UnitTests` — проверки состояний, очереди, long polling и lease.
 - `Pilot.BimBridge.IntegrationTests` — проверки файловой передачи результатов.
 
+В `ServerExtension` планирование, lease и task lifecycle находятся в
+`BimBridgeRuntime.cs`; методы прежнего upload/download API — в
+`LegacyArtifactRuntime.cs`; resumable artifact v2 — в `ArtifactRuntime.cs`.
+`ArtifactTaskState.cs` сохраняет состояние и профиль попыток на диске.
+`TokenHttpAdapter.cs` лишь адаптирует существующий token endpoint к этому runtime.
+Новые поля telemetry в `Contracts` добавлены без смены занятых protobuf tags;
+отсутствующие длительности остаются nullable. Manager измеряет свои интервалы
+`Stopwatch`, а UTC события использует для timeline. Метрики worker передаются с
+durable artifact и не выводятся из разницы глобальных счётчиков Manager.
+
 Серверные проекты имеют целевую платформу `.NET Standard 2.0` и используют
 `Ascon.Pilot.ServerExtensions.SDK` версии `26.10.0`.
 
