@@ -58,6 +58,8 @@ namespace Pilot.BimBridge.ServerExtension
                 foreach(var state in durableStore.RecoverTaskStates())
                 {
                     var restored=state.ToTask();
+                    if(restored.State==BimTaskStates.Queued)
+                        restored.QueuedAtTicks=System.Diagnostics.Stopwatch.GetTimestamp();
                     if(restored.State==BimTaskStates.CancelRequested)
                     {
                         restored.State=BimTaskStates.Cancelled;restored.CompletedAtUtc=_clock.UtcNow;
@@ -177,12 +179,22 @@ namespace Pilot.BimBridge.ServerExtension
                     CreatedAtUtc = now,
                     QueuedAtTicks = System.Diagnostics.Stopwatch.GetTimestamp()
                 };
+                task.TaskAcceptanceWallMs=(System.Diagnostics.Stopwatch.GetTimestamp()-acceptedStarted)*
+                    1000d/System.Diagnostics.Stopwatch.Frequency;
+                if(_results is FileSystemBimResultStore durableStore)
+                {
+                    try { durableStore.SaveTaskState(task); }
+                    catch(Exception error)
+                    {
+                        _log.Error("Task acceptance persistence failed for client request " + request.ClientRequestId,error);
+                        return ResponseErrors.Error<BimTaskAcceptedDto>(BimBridgeErrorCodes.InternalError,
+                            "Task could not be saved.",true);
+                    }
+                }
                 _tasks.Add(task.TaskId, task);
                 _clientRequests.Add(task.ClientRequestId, task.TaskId);
                 Interlocked.Increment(ref _submitted);
                 DispatchWaitersLocked();
-                task.TaskAcceptanceWallMs=(System.Diagnostics.Stopwatch.GetTimestamp()-acceptedStarted)*
-                    1000d/System.Diagnostics.Stopwatch.Frequency;
                 return Accepted(task);
             }
         }

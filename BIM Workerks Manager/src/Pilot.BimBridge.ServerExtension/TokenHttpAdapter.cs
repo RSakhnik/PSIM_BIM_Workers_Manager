@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -18,6 +19,7 @@ namespace Pilot.BimBridge.ServerExtension
     {
         private readonly RestApiOptions _options;
         private readonly IBimBridgeLog _log;
+        private readonly SubmitRequestJournal _submitJournal;
         private readonly BimBridgeApiSession _api;
         private readonly HttpListener _listener = new HttpListener();
         private readonly CancellationTokenSource _stop = new CancellationTokenSource();
@@ -25,9 +27,11 @@ namespace Pilot.BimBridge.ServerExtension
         private readonly byte[] _tokenHash;
         private readonly string _path;
         private Task _loop;
-        public TokenHttpAdapter(RestApiOptions options, BimBridgeRuntime runtime, IBimBridgeLog log)
+        public TokenHttpAdapter(RestApiOptions options, BimBridgeRuntime runtime, IBimBridgeLog log,
+            SubmitRequestJournal submitJournal = null)
         {
             options.Validate(); _options=options; _log=log;
+            _submitJournal=submitJournal;
             _api=new BimBridgeApiSession(runtime,null,log);
             _path=new Uri(options.Prefix).AbsolutePath;
             using(var sha=SHA256.Create()) _tokenHash=sha.ComputeHash(Encoding.UTF8.GetBytes(options.ResolveToken()));
@@ -66,11 +70,14 @@ namespace Pilot.BimBridge.ServerExtension
             var diff=0;for(var i=0;i<hash.Length;i++)diff|=hash[i]^_tokenHash[i];return diff==0;
         }
         private static JObject Error(string code,string message) => JObject.FromObject(new {Error=new {Code=code,Message=message,IsRetryable=false}});
+        private static int ErrorStatus(string code) =>
+            code==BimBridgeErrorCodes.TaskNotFound || code==BimBridgeErrorCodes.ResultExpired ? 404 :
+            code==BimBridgeErrorCodes.InternalError ? 500 : 409;
         private async Task JsonAsync(HttpListenerResponse response,object value,int status=200)
         {
             var body=value as JToken ?? JToken.FromObject(value);
             if(status==200 && body is JObject obj && obj["Error"] is JObject error)
-                status=((string)error["Code"]=="TASK_NOT_FOUND" || (string)error["Code"]=="RESULT_EXPIRED")?404:409;
+                status=ErrorStatus((string)error["Code"]);
             var data=Encoding.UTF8.GetBytes(body.ToString(Formatting.None));
             response.StatusCode=status;response.ContentType="application/json; charset=utf-8";
             response.ContentLength64=data.Length;
@@ -94,6 +101,8 @@ namespace Pilot.BimBridge.ServerExtension
         private async Task ServeAsync(HttpListenerContext context)
         {
             var response=context.Response;var started=false;
+            var elapsed=Stopwatch.StartNew();
+            Guid? submitCallId=null,clientRequestId=null;
             try
             {
                 response.Headers["Cache-Control"]="no-store";
@@ -126,14 +135,27 @@ namespace Pilot.BimBridge.ServerExtension
                 if(method=="GET" && parts.SequenceEqual(new[]{"workers"})) {await JsonAsync(response,await _api.GetWorkersAsync());return;}
                 if(method=="POST" && parts.SequenceEqual(new[]{"tasks"}))
                 {
+                    submitCallId=Guid.NewGuid();
+                    _submitJournal?.Write(submitCallId.Value,null,null,"received",elapsed);
                     var body=await RequestAsync(context.Request).ConfigureAwait(false);
                     var payload=body.GetValue("payload",StringComparison.OrdinalIgnoreCase) ?? new JObject();
                     foreach(var prop in body.Properties().Where(p=>p.Name.Equals("payload",StringComparison.OrdinalIgnoreCase)).ToArray())prop.Remove();
                     var request=body.ToObject<SubmitBimTaskRequestDto>();
+                    clientRequestId=request.ClientRequestId;
+                    _submitJournal?.Write(submitCallId.Value,clientRequestId,null,"parsed",elapsed);
                     request.ProtocolVersion=request.ProtocolVersion??BimBridgeProtocol.Version;
                     request.Payload=Encoding.UTF8.GetBytes(payload.ToString(Formatting.None));
                     request.PayloadContentType="application/json";request.PayloadEncoding="utf-8";
-                    await JsonAsync(response,await _api.SubmitTaskAsync(request));return;
+                    var accepted=await _api.SubmitTaskAsync(request).ConfigureAwait(false);
+                    var status=accepted.Error==null?200:ErrorStatus(accepted.Error.Code);
+                    _submitJournal?.Write(submitCallId.Value,clientRequestId,
+                        accepted.Error==null?accepted.TaskId:(Guid?)null,"processed",elapsed,status,
+                        accepted.Error?.Code);
+                    await JsonAsync(response,accepted).ConfigureAwait(false);
+                    _submitJournal?.Write(submitCallId.Value,clientRequestId,
+                        accepted.Error==null?accepted.TaskId:(Guid?)null,"response-written",elapsed,status,
+                        accepted.Error?.Code);
+                    return;
                 }
                 if(parts.Length>=2 && parts[0]=="tasks" && Guid.TryParse(parts[1],out var task))
                 {
@@ -165,12 +187,20 @@ namespace Pilot.BimBridge.ServerExtension
                 }
                 await JsonAsync(response,Error("NOT_FOUND","Route not found."),404);
             }
-            catch(RequestException error) {if(!started)await TryErrorAsync(response,error.Code,error.Status);}
+            catch(RequestException error)
+            {
+                if(submitCallId.HasValue)_submitJournal?.Write(submitCallId.Value,clientRequestId,null,"failed",elapsed,error.Status,error.Code);
+                if(!started)await TryErrorAsync(response,error.Code,error.Status);
+            }
             catch(Exception error) when(error is JsonException || error is DecoderFallbackException || error is FormatException)
-            {if(!started)await TryErrorAsync(response,"INVALID_REQUEST",400);}
+            {
+                if(submitCallId.HasValue)_submitJournal?.Write(submitCallId.Value,clientRequestId,null,"failed",elapsed,400,"INVALID_REQUEST");
+                if(!started)await TryErrorAsync(response,"INVALID_REQUEST",400);
+            }
             catch(Exception)
             {
                 // No exception text: request bodies/headers may contain credentials.
+                if(submitCallId.HasValue)_submitJournal?.Write(submitCallId.Value,clientRequestId,null,"failed",elapsed,500,"HTTP_ADAPTER_ERROR");
                 if(!started)await TryErrorAsync(response,"HTTP_ADAPTER_ERROR",500);
             }
             finally {try{response.Close();}catch{} _slots.Release();}

@@ -27,7 +27,8 @@ namespace Pilot.BimBridge.IntegrationTests
             _options=new BimBridgeOptions();_options.Results.Directory=_root;_options.Results.ChunkSizeBytes=4;
             _options.RestApi=new RestApiOptions {Enabled=true,Prefix="http://127.0.0.1:"+number+"/bim-bridge/",Token="test-only-token",MaxRequestBytes=2048};
             _runtime=new BimBridgeRuntime(_options,new SystemClock(),new FileSystemBimResultStore(_root),new SilentIntegrationLog(),false);
-            _adapter=new TokenHttpAdapter(_options.RestApi,_runtime,new SilentIntegrationLog());_adapter.Start();
+            var log=new SilentIntegrationLog();
+            _adapter=new TokenHttpAdapter(_options.RestApi,_runtime,log,new SubmitRequestJournal(_root,log));_adapter.Start();
             _http=new HttpClient(new HttpClientHandler {UseProxy=false}) {BaseAddress=new Uri(_options.RestApi.Prefix),Timeout=TimeSpan.FromSeconds(5)};
             _http.DefaultRequestHeaders.Add("X-Api-Token","test-only-token");
         }
@@ -78,6 +79,20 @@ namespace Pilot.BimBridge.IntegrationTests
             var task=(string)JObject.Parse(await reply.Content.ReadAsStringAsync())["TaskId"];
             Assert.That((await _http.DeleteAsync("tasks/"+task)).StatusCode,Is.EqualTo(HttpStatusCode.OK));
             Assert.That((string)JObject.Parse(await _http.GetStringAsync("tasks/"+task))["State"],Is.EqualTo("CANCELLED"));
+        }
+        [Test] public async Task SubmitJournalCorrelatesAcceptanceAndResponseWithoutSecrets()
+        {
+            var clientRequestId=Guid.NewGuid();
+            var reply=await _http.PostAsync("tasks",new StringContent(
+                "{\"operationCode\":\"echo\",\"clientRequestId\":\""+clientRequestId+"\",\"payload\":{}}",
+                Encoding.UTF8,"application/json"));
+            Assert.That(reply.StatusCode,Is.EqualTo(HttpStatusCode.OK));
+            var text=File.ReadAllText(Path.Combine(_root,"submit-requests.log"));
+            Assert.That(text,Does.Contain("clientRequest="+clientRequestId));
+            Assert.That(text,Does.Contain("phase=received"));
+            Assert.That(text,Does.Contain("phase=processed"));
+            Assert.That(text,Does.Contain("phase=response-written"));
+            Assert.That(text,Does.Not.Contain("test-only-token"));
         }
         [Test] public void EnvironmentTokenFallsBackToConfiguredToken()
         {

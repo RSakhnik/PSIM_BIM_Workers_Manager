@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -45,6 +46,58 @@ namespace Pilot.BimBridge.UnitTests
             var second = _runtime.Submit(TaskRequest(requestId));
             Assert.That(second.TaskId, Is.EqualTo(first.TaskId));
             Assert.That(_runtime.GetStatistics().SubmittedTasks, Is.EqualTo(1));
+        }
+
+        [Test]
+        public async Task AcceptedTaskSurvivesRestartWithOriginalPayload()
+        {
+            var requestId = Guid.NewGuid();
+            var original = _runtime.Submit(TaskRequest(requestId));
+            Assert.That(original.Error, Is.Null);
+            var saved = new FileSystemBimResultStore(_directory).ReadTaskState(original.TaskId);
+            Assert.That(saved.ClientRequestId, Is.EqualTo(requestId));
+            Assert.That(saved.State, Is.EqualTo(BimTaskStates.Queued));
+
+            _runtime.Dispose();
+            _runtime = new BimBridgeRuntime(TestOptions.Create(_directory), _clock,
+                new FileSystemBimResultStore(_directory), new SilentLog(), false);
+            var repeated = _runtime.Submit(TaskRequest(requestId));
+            Assert.That(repeated.TaskId, Is.EqualTo(original.TaskId));
+
+            var worker = Register("restarted-worker", new[] { "READ" }, new[] { "MODEL-A" });
+            var assigned = await _runtime.WaitForTaskAsync(new WaitForTaskRequestDto
+            {
+                RegistrationId = worker.RegistrationId,
+                WaitTimeoutSeconds = 1
+            }, CancellationToken.None);
+            Assert.That(assigned.Assignment.TaskId, Is.EqualTo(original.TaskId));
+            Assert.That(assigned.Assignment.Payload, Is.EqualTo(new byte[] { 1, 2, 3 }));
+        }
+
+        [Test]
+        public void StorageFailureDoesNotAcceptTask()
+        {
+            File.WriteAllText(Path.Combine(_directory, ".task-states"), "blocked");
+            var rejected = _runtime.Submit(TaskRequest(Guid.NewGuid()));
+            Assert.That(rejected.Error.Code, Is.EqualTo(BimBridgeErrorCodes.InternalError));
+            Assert.That(rejected.Error.IsRetryable, Is.True);
+            Assert.That(_runtime.GetStatistics().SubmittedTasks, Is.Zero);
+        }
+
+        [Test]
+        public void SubmitJournalWritesCorrelatedEventsWithoutCredentials()
+        {
+            var journal = new SubmitRequestJournal(_directory, new SilentLog());
+            var callId = Guid.NewGuid();
+            var requestId = Guid.NewGuid();
+            var timer = Stopwatch.StartNew();
+            journal.Write(callId, null, null, "received", timer);
+            journal.Write(callId, requestId, null, "parsed", timer);
+            var lines = File.ReadAllText(Path.Combine(_directory, "submit-requests.log"));
+            Assert.That(lines, Does.Contain("call=" + callId));
+            Assert.That(lines, Does.Contain("clientRequest=" + requestId));
+            Assert.That(lines, Does.Contain("phase=received"));
+            Assert.That(lines, Does.Contain("phase=parsed"));
         }
 
         [Test]

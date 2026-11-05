@@ -37,7 +37,8 @@ namespace Pilot.BimBridge.ServerExtension
                 _runtime = new BimBridgeRuntime(options, new SystemClock(), resultStore, _log);
                 if (options.RestApi.Enabled)
                 {
-                    try { _http = new TokenHttpAdapter(options.RestApi, _runtime, _log); _http.Start(); }
+                    try { _http = new TokenHttpAdapter(options.RestApi, _runtime, _log,
+                        new SubmitRequestJournal(options.Results.Directory, _log)); _http.Start(); }
                     catch (Exception error)
                     {
                         _http?.Dispose();

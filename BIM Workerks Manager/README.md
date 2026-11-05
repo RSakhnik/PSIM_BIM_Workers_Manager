@@ -33,6 +33,17 @@ stdio процесс без сетевого listener. Он не подключ�
 `BimBridgeRuntime.cs`; методы прежнего upload/download API — в
 `LegacyArtifactRuntime.cs`; resumable artifact v2 — в `ArtifactRuntime.cs`.
 `ArtifactTaskState.cs` сохраняет состояние и профиль попыток на диске.
+Приём задачи сначала сохраняет состояние `QUEUED` с `ClientRequestId`, параметрами
+назначения и payload в `Results.Directory\.task-states`, затем отвечает клиенту.
+После перезапуска очередь восстанавливается, а повторная отправка с тем же
+`ClientRequestId` возвращает прежний `TaskId`. Если запись не удалась, задача не
+принимается. Payload удаляется из состояния после завершения задачи.
+Token HTTP adapter записывает этапы `POST /tasks` в
+`Results.Directory\submit-requests.log`: UTC, внутренний `call`, `ClientRequestId`,
+`TaskId`, фазу, время, HTTP статус и код ошибки. Токен, заголовки и payload туда
+не записываются. `processed` означает ответ runtime, `response-written` означает
+успешную запись ответа в локальный HTTP stream; получение ответа клиентом этот
+этап не подтверждает.
 `DiagnosticTransport.cs` ограничивает размер необязательной диагностики 64 KiB,
 проверяет content type и SHA-256, но не разбирает схему worker. Envelope хранится
 вместе с upload/task state и удаляется по действующему TTL задачи и результата.

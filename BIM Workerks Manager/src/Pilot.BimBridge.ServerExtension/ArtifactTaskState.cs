@@ -13,6 +13,12 @@ namespace Pilot.BimBridge.ServerExtension
         public Guid? UploadId;
         public int AttemptNumber;
         public string State,OperationCode,ExecutionWorkerInstanceId;
+        public string[] RequiredCapabilities;
+        public string TargetModelKey,PreferredWorkerInstanceId,PayloadContentType,PayloadEncoding;
+        public byte[] Payload;
+        public int Priority,MaxAttempts;
+        public bool CanRetry;
+        public DateTime? ExpiresAtUtc;
         public double? WorkerProcessingWallMs;
         public double? QueueWaitMs;
         public double? AttemptQueueWaitMs;
@@ -35,6 +41,10 @@ namespace Pilot.BimBridge.ServerExtension
         public BimTaskErrorDto Error;
         public TaskRecord ToTask()=>new TaskRecord {TaskId=TaskId,ClientRequestId=ClientRequestId,State=State,
             OperationCode=OperationCode,CreatedAtUtc=CreatedAtUtc,CompletedAtUtc=CompletedAtUtc,
+            RequiredCapabilities=RequiredCapabilities??Array.Empty<string>(),TargetModelKey=TargetModelKey,
+            PreferredWorkerInstanceId=PreferredWorkerInstanceId,PayloadContentType=PayloadContentType,
+            PayloadEncoding=PayloadEncoding,Payload=Payload??Array.Empty<byte>(),Priority=Priority,
+            MaxAttempts=MaxAttempts,CanRetry=CanRetry,ExpiresAtUtc=ExpiresAtUtc,
             PreparedAtUtc=PreparedAtUtc,AssignedAtUtc=AssignedAtUtc,StartedAtUtc=StartedAtUtc,
             AssignmentId=AssignmentId,UploadId=UploadId,AttemptNumber=AttemptNumber,Error=Error,
             ExecutionWorkerInstanceId=ExecutionWorkerInstanceId,WorkerProcessingWallMs=WorkerProcessingWallMs,
@@ -54,6 +64,13 @@ namespace Pilot.BimBridge.ServerExtension
             Directory.CreateDirectory(TaskStateRoot);
             var state=new StoredArtifactTaskState {TaskId=task.TaskId,ClientRequestId=task.ClientRequestId,State=task.State,
                 OperationCode=task.OperationCode,CreatedAtUtc=task.CreatedAtUtc,CompletedAtUtc=task.CompletedAtUtc,
+                RequiredCapabilities=task.RequiredCapabilities,TargetModelKey=task.TargetModelKey,
+                PreferredWorkerInstanceId=task.PreferredWorkerInstanceId,PayloadContentType=task.PayloadContentType,
+                PayloadEncoding=task.PayloadEncoding,
+                Payload=task.State==BimTaskStates.Completed || task.State==BimTaskStates.Failed ||
+                    task.State==BimTaskStates.Cancelled || task.State==BimTaskStates.Expired ? null : task.Payload,
+                Priority=task.Priority,
+                MaxAttempts=task.MaxAttempts,CanRetry=task.CanRetry,ExpiresAtUtc=task.ExpiresAtUtc,
                 PreparedAtUtc=task.PreparedAtUtc,AssignedAtUtc=task.AssignedAtUtc,StartedAtUtc=task.StartedAtUtc,
                 AssignmentId=task.AssignmentId,UploadId=task.UploadId,AttemptNumber=task.AttemptNumber,Error=task.Error,
                 ExecutionWorkerInstanceId=task.ExecutionWorkerInstanceId,WorkerProcessingWallMs=task.WorkerProcessingWallMs,
